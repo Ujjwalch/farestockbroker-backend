@@ -10,7 +10,9 @@ const adminRoutes = require('./routes/adminRoutes');
 const contentRoutes = require('./routes/contentRoutes');
 const leadRoutes = require('./routes/leadRoutes');
 const educationRoutes = require('./routes/educationRoutes');
+const ipoRoutes = require('./routes/ipoRoutes');
 const connetDB = require('./config/database');
+const { startWorldIpoCron } = require('./jobs/worldIpoCron');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -24,6 +26,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/education', educationRoutes);
+app.use('/api/ipo', ipoRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'FarestockBroker API is running' });
@@ -47,5 +50,6 @@ app.use('*', (req, res) => {
 
 app.listen(PORT, () => {
   connetDB();
+  startWorldIpoCron();
   console.log(`Server is running on port ${PORT}`);
 });
