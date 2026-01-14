@@ -9,6 +9,7 @@ const brokerRoutes = require('./routes/brokerRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const contentRoutes = require('./routes/contentRoutes');
 const leadRoutes = require('./routes/leadRoutes');
+const educationRoutes = require('./routes/educationRoutes');
 const connetDB = require('./config/database');
 
 const app = express();
@@ -22,6 +23,7 @@ app.use('/api/brokers', brokerRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api/leads', leadRoutes);
+app.use('/api/education', educationRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'FarestockBroker API is running' });
