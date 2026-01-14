@@ -461,10 +461,11 @@ exports.updateArticle = async (req, res) => {
       category
     });
   } catch (error) {
+    console.error('Error updating article:', error);
     res.status(500).json({
       success: false,
       message: 'Error updating article',
-      error: error.message
+      error: error.message || 'Internal server error'
     });
   }
 };
