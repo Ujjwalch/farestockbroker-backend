@@ -49,7 +49,9 @@ exports.getIPODetails = async (req, res) => {
  */
 exports.refreshIPOs = async (req, res) => {
   try {
+    console.log('[IPO] Starting scrape...');
     const scraped = await scrapeRenaissanceIpoCalendar();
+    console.log('[IPO] Scraped:', scraped.length, 'IPOs');
 
     let inserted = 0;
     let updated = 0;
@@ -73,6 +75,8 @@ exports.refreshIPOs = async (req, res) => {
       }
     }
 
+    console.log('[IPO] Refresh complete. Inserted:', inserted, 'Updated:', updated);
+
     return res.json({
       success: true,
       scraped: scraped.length,
@@ -80,6 +84,7 @@ exports.refreshIPOs = async (req, res) => {
       updated,
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    console.error('[IPO] Refresh error:', err);
+    return res.status(500).json({ success: false, message: err.message, stack: err.stack });
   }
 };
