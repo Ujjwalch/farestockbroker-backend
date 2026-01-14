@@ -1,5 +1,6 @@
 const WorldIPO = require("../models/WorldIPO");
 const { scrapeRenaissanceIpoCalendar } = require("../services/worldIpoScraper");
+const { scrapeAllIndianIPOs } = require("../services/indiaIpoScraper");
 
 /**
  * GET /api/ipo
@@ -49,9 +50,19 @@ exports.getIPODetails = async (req, res) => {
  */
 exports.refreshIPOs = async (req, res) => {
   try {
-    console.log('[IPO] Starting scrape...');
-    const scraped = await scrapeRenaissanceIpoCalendar();
-    console.log('[IPO] Scraped:', scraped.length, 'IPOs');
+    // Scrape from both sources
+    const [worldIPOs, indiaIPOs] = await Promise.all([
+      scrapeRenaissanceIpoCalendar().catch(err => {
+        console.error('[World IPO] Error:', err.message);
+        return [];
+      }),
+      scrapeAllIndianIPOs().catch(err => {
+        console.error('[India IPO] Error:', err.message);
+        return [];
+      })
+    ]);
+
+    const scraped = [...worldIPOs, ...indiaIPOs];
 
     let inserted = 0;
     let updated = 0;
@@ -59,8 +70,7 @@ exports.refreshIPOs = async (req, res) => {
     for (const item of scraped) {
       const filter = {
         company: item.company,
-        symbol: item.symbol,
-        ipoDate: item.ipoDate,
+        source: item.source,
       };
 
       const updateDoc = { $set: item };
@@ -75,8 +85,6 @@ exports.refreshIPOs = async (req, res) => {
       }
     }
 
-    console.log('[IPO] Refresh complete. Inserted:', inserted, 'Updated:', updated);
-
     return res.json({
       success: true,
       scraped: scraped.length,
@@ -85,6 +93,6 @@ exports.refreshIPOs = async (req, res) => {
     });
   } catch (err) {
     console.error('[IPO] Refresh error:', err);
-    return res.status(500).json({ success: false, message: err.message, stack: err.stack });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };

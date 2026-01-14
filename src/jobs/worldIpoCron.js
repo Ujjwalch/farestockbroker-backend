@@ -1,6 +1,7 @@
 const cron = require("node-cron");
 const WorldIPO = require("../models/WorldIPO");
 const { scrapeRenaissanceIpoCalendar } = require("../services/worldIpoScraper");
+const { scrapeAllIndianIPOs } = require("../services/indiaIpoScraper");
 
 function startWorldIpoCron() {
   // Runs every 6 hours
@@ -8,13 +9,23 @@ function startWorldIpoCron() {
     try {
       console.log("[WorldIPO] Cron refresh started...");
 
-      const scraped = await scrapeRenaissanceIpoCalendar();
+      const [worldIPOs, indiaIPOs] = await Promise.all([
+        scrapeRenaissanceIpoCalendar().catch(err => {
+          console.error('[World IPO Cron] Error:', err.message);
+          return [];
+        }),
+        scrapeAllIndianIPOs().catch(err => {
+          console.error('[India IPO Cron] Error:', err.message);
+          return [];
+        })
+      ]);
 
+      const scraped = [...worldIPOs, ...indiaIPOs];
       let upserts = 0;
 
       for (const item of scraped) {
         await WorldIPO.updateOne(
-          { company: item.company, symbol: item.symbol, ipoDate: item.ipoDate },
+          { company: item.company, source: item.source },
           { $set: item },
           { upsert: true }
         );
