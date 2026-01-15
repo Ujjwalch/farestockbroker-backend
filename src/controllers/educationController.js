@@ -98,7 +98,7 @@ exports.getCategoryBySlug = async (req, res) => {
 
 exports.getArticleBySlug = async (req, res) => {
   try {
-    const { categorySlug, subcategorySlug, articleSlug } = req.params;
+    const { categorySlug, subcategorySlug, sectionSlug, articleSlug } = req.params;
 
     const category = await Education.findOne({ slug: categorySlug });
 
@@ -118,21 +118,29 @@ exports.getArticleBySlug = async (req, res) => {
       });
     }
 
-    // Try to find article in sections first, then fall back to direct articles
+    // Find section
+    let section = null;
     let article = null;
-    let sectionTitle = null;
     
-    if (subcategory.sections && subcategory.sections.length > 0) {
-      for (const section of subcategory.sections) {
+    if (sectionSlug) {
+      section = subcategory.sections?.find(sec => sec.slug === sectionSlug);
+      if (section) {
         article = section.articles?.find(art => art.slug === articleSlug);
+      }
+    }
+    
+    // Fallback: search in all sections if not found
+    if (!article && subcategory.sections) {
+      for (const sec of subcategory.sections) {
+        article = sec.articles?.find(art => art.slug === articleSlug);
         if (article) {
-          sectionTitle = section.title;
+          section = sec;
           break;
         }
       }
     }
     
-    // Fallback to direct articles if not found in sections
+    // Fallback: search in direct articles
     if (!article) {
       article = subcategory.articles?.find(art => art.slug === articleSlug);
     }
@@ -153,7 +161,7 @@ exports.getArticleBySlug = async (req, res) => {
       breadcrumb: {
         category: { title: category.title, slug: category.slug },
         subcategory: { title: subcategory.title, slug: subcategory.slug },
-        section: sectionTitle ? { title: sectionTitle } : null
+        section: section ? { title: section.title, slug: section.slug } : null
       }
     });
   } catch (error) {

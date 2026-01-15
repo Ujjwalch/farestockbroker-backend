@@ -6,7 +6,8 @@ const { authenticateAdmin } = require('../middlewares/auth');
 // Public routes
 router.get('/categories', educationController.getAllCategories);
 router.get('/categories/:slug', educationController.getCategoryBySlug);
-router.get('/articles/:categorySlug/:subcategorySlug/:articleSlug', educationController.getArticleBySlug);
+router.get('/articles/:categorySlug/:subcategorySlug/:sectionSlug/:articleSlug', educationController.getArticleBySlug);
+router.get('/articles/:categorySlug/:subcategorySlug/:articleSlug', educationController.getArticleBySlug); // Fallback for old URLs
 router.get('/search', educationController.searchArticles);
 
 // Admin routes
