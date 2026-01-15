@@ -6,6 +6,10 @@ const articleSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  question: {
+    type: String,
+    trim: true
+  },
   content: {
     type: String,
     required: true
