@@ -10,10 +10,26 @@ exports.getAllCategories = async (req, res) => {
       ...cat,
       subcategories: cat.subcategories
         .filter(sub => sub.isPublished)
-        .map(sub => ({
-          ...sub,
-          articles: sub.articles.filter(art => art.isPublished).sort((a, b) => a.order - b.order)
-        }))
+        .map(sub => {
+          // Handle both sections and direct articles for backward compatibility
+          const processedSub = {
+            ...sub,
+            articles: sub.articles?.filter(art => art.isPublished).sort((a, b) => a.order - b.order) || []
+          };
+          
+          // If sections exist, process them
+          if (sub.sections && sub.sections.length > 0) {
+            processedSub.sections = sub.sections
+              .filter(sec => sec.isPublished)
+              .map(sec => ({
+                ...sec,
+                articles: sec.articles?.filter(art => art.isPublished).sort((a, b) => a.order - b.order) || []
+              }))
+              .sort((a, b) => a.order - b.order);
+          }
+          
+          return processedSub;
+        })
         .sort((a, b) => a.order - b.order)
     }));
 
@@ -46,10 +62,25 @@ exports.getCategoryBySlug = async (req, res) => {
 
     category.subcategories = category.subcategories
       .filter(sub => sub.isPublished)
-      .map(sub => ({
-        ...sub,
-        articles: sub.articles.filter(art => art.isPublished).sort((a, b) => a.order - b.order)
-      }))
+      .map(sub => {
+        const processedSub = {
+          ...sub,
+          articles: sub.articles?.filter(art => art.isPublished).sort((a, b) => a.order - b.order) || []
+        };
+        
+        // If sections exist, process them
+        if (sub.sections && sub.sections.length > 0) {
+          processedSub.sections = sub.sections
+            .filter(sec => sec.isPublished)
+            .map(sec => ({
+              ...sec,
+              articles: sec.articles?.filter(art => art.isPublished).sort((a, b) => a.order - b.order) || []
+            }))
+            .sort((a, b) => a.order - b.order);
+        }
+        
+        return processedSub;
+      })
       .sort((a, b) => a.order - b.order);
 
     res.json({
@@ -87,7 +118,24 @@ exports.getArticleBySlug = async (req, res) => {
       });
     }
 
-    const article = subcategory.articles.find(art => art.slug === articleSlug);
+    // Try to find article in sections first, then fall back to direct articles
+    let article = null;
+    let sectionTitle = null;
+    
+    if (subcategory.sections && subcategory.sections.length > 0) {
+      for (const section of subcategory.sections) {
+        article = section.articles?.find(art => art.slug === articleSlug);
+        if (article) {
+          sectionTitle = section.title;
+          break;
+        }
+      }
+    }
+    
+    // Fallback to direct articles if not found in sections
+    if (!article) {
+      article = subcategory.articles?.find(art => art.slug === articleSlug);
+    }
 
     if (!article) {
       return res.status(404).json({
@@ -104,7 +152,8 @@ exports.getArticleBySlug = async (req, res) => {
       article,
       breadcrumb: {
         category: { title: category.title, slug: category.slug },
-        subcategory: { title: subcategory.title, slug: subcategory.slug }
+        subcategory: { title: subcategory.title, slug: subcategory.slug },
+        section: sectionTitle ? { title: sectionTitle } : null
       }
     });
   } catch (error) {
@@ -132,7 +181,8 @@ exports.searchArticles = async (req, res) => {
 
     categories.forEach(cat => {
       cat.subcategories.forEach(sub => {
-        sub.articles.forEach(art => {
+        // Search in direct articles
+        sub.articles?.forEach(art => {
           if (art.isPublished && 
               (art.title.toLowerCase().includes(q.toLowerCase()) ||
                art.content.toLowerCase().includes(q.toLowerCase()) ||
@@ -143,6 +193,23 @@ exports.searchArticles = async (req, res) => {
               subcategory: { title: sub.title, slug: sub.slug }
             });
           }
+        });
+        
+        // Search in sections
+        sub.sections?.forEach(sec => {
+          sec.articles?.forEach(art => {
+            if (art.isPublished && 
+                (art.title.toLowerCase().includes(q.toLowerCase()) ||
+                 art.content.toLowerCase().includes(q.toLowerCase()) ||
+                 art.tags?.some(tag => tag.toLowerCase().includes(q.toLowerCase())))) {
+              results.push({
+                ...art,
+                category: { title: cat.title, slug: cat.slug },
+                subcategory: { title: sub.title, slug: sub.slug },
+                section: { title: sec.title }
+              });
+            }
+          });
         });
       });
     });
