@@ -20,6 +20,10 @@ router.post('/admin/categories/:categoryId/subcategories', authenticateAdmin, ed
 router.put('/admin/categories/:categoryId/subcategories/:subcategoryId', authenticateAdmin, educationController.updateSubcategory);
 router.delete('/admin/categories/:categoryId/subcategories/:subcategoryId', authenticateAdmin, educationController.deleteSubcategory);
 
+router.post('/admin/categories/:categoryId/subcategories/:subcategoryId/sections', authenticateAdmin, educationController.addSection);
+router.put('/admin/categories/:categoryId/subcategories/:subcategoryId/sections/:sectionId', authenticateAdmin, educationController.updateSection);
+router.delete('/admin/categories/:categoryId/subcategories/:subcategoryId/sections/:sectionId', authenticateAdmin, educationController.deleteSection);
+
 router.post('/admin/categories/:categoryId/subcategories/:subcategoryId/articles', authenticateAdmin, educationController.addArticle);
 router.put('/admin/categories/:categoryId/subcategories/:subcategoryId/articles/:articleId', authenticateAdmin, educationController.updateArticle);
 router.delete('/admin/categories/:categoryId/subcategories/:subcategoryId/articles/:articleId', authenticateAdmin, educationController.deleteArticle);

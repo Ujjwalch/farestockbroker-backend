@@ -256,9 +256,20 @@ exports.createCategory = async (req, res) => {
   try {
     const { title, slug, description, icon, order } = req.body;
 
+    const generatedSlug = slug || title.toLowerCase().replace(/\s+/g, '-');
+    
+    // Check if slug already exists
+    const existing = await Education.findOne({ slug: generatedSlug });
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        message: `Category with slug "${generatedSlug}" already exists. Please use a different title or slug.`
+      });
+    }
+
     const category = new Education({
       title,
-      slug: slug || title.toLowerCase().replace(/\s+/g, '-'),
+      slug: generatedSlug,
       description,
       icon,
       order: order || 0,
@@ -452,6 +463,147 @@ exports.deleteSubcategory = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error deleting subcategory',
+      error: error.message
+    });
+  }
+};
+
+exports.addSection = async (req, res) => {
+  try {
+    const { categoryId, subcategoryId } = req.params;
+    const { title, slug, order } = req.body;
+
+    const category = await Education.findById(categoryId);
+
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: 'Category not found'
+      });
+    }
+
+    const subcategory = category.subcategories.id(subcategoryId);
+
+    if (!subcategory) {
+      return res.status(404).json({
+        success: false,
+        message: 'Subcategory not found'
+      });
+    }
+
+    const sectionSlug = slug || title.toLowerCase().replace(/\s+/g, '-');
+
+    if (!subcategory.sections) {
+      subcategory.sections = [];
+    }
+
+    subcategory.sections.push({
+      title,
+      slug: sectionSlug,
+      order: order || 0,
+      articles: [],
+      isPublished: true
+    });
+
+    await category.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Section added successfully',
+      category
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error adding section',
+      error: error.message
+    });
+  }
+};
+
+exports.updateSection = async (req, res) => {
+  try {
+    const { categoryId, subcategoryId, sectionId } = req.params;
+    const updates = req.body;
+
+    const category = await Education.findById(categoryId);
+
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: 'Category not found'
+      });
+    }
+
+    const subcategory = category.subcategories.id(subcategoryId);
+
+    if (!subcategory) {
+      return res.status(404).json({
+        success: false,
+        message: 'Subcategory not found'
+      });
+    }
+
+    const section = subcategory.sections.id(sectionId);
+
+    if (!section) {
+      return res.status(404).json({
+        success: false,
+        message: 'Section not found'
+      });
+    }
+
+    Object.assign(section, updates);
+    await category.save();
+
+    res.json({
+      success: true,
+      message: 'Section updated successfully',
+      category
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error updating section',
+      error: error.message
+    });
+  }
+};
+
+exports.deleteSection = async (req, res) => {
+  try {
+    const { categoryId, subcategoryId, sectionId } = req.params;
+
+    const category = await Education.findById(categoryId);
+
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: 'Category not found'
+      });
+    }
+
+    const subcategory = category.subcategories.id(subcategoryId);
+
+    if (!subcategory) {
+      return res.status(404).json({
+        success: false,
+        message: 'Subcategory not found'
+      });
+    }
+
+    subcategory.sections.pull(sectionId);
+    await category.save();
+
+    res.json({
+      success: true,
+      message: 'Section deleted successfully',
+      category
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting section',
       error: error.message
     });
   }
