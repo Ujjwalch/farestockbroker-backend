@@ -136,6 +136,11 @@ const brokerSchema = new mongoose.Schema({
     default: ''
   },
   
+  logo: {
+    type: String,
+    default: ''
+  },
+  
   brokerageDetails: {
     type: brokerageDetailsSchema,
     default: () => ({})
