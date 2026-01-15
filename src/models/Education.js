@@ -43,6 +43,29 @@ const articleSchema = new mongoose.Schema({
   }
 });
 
+const sectionSchema = new mongoose.Schema({
+  title: {
+    type: String,
+    required: true,
+    trim: true,
+    default: 'Online'
+  },
+  slug: {
+    type: String,
+    required: true,
+    lowercase: true
+  },
+  order: {
+    type: Number,
+    default: 0
+  },
+  articles: [articleSchema],
+  isPublished: {
+    type: Boolean,
+    default: true
+  }
+});
+
 const subcategorySchema = new mongoose.Schema({
   title: {
     type: String,
