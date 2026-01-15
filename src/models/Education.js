@@ -85,15 +85,7 @@ const subcategorySchema = new mongoose.Schema({
   },
   sections: {
     type: [sectionSchema],
-    default: function() {
-      return [{
-        title: 'Online',
-        slug: 'online',
-        order: 0,
-        articles: [],
-        isPublished: true
-      }];
-    }
+    default: []
   },
   articles: [articleSchema],
   isPublished: {

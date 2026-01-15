@@ -353,12 +353,21 @@ exports.addSubcategory = async (req, res) => {
       });
     }
 
+    const subcategorySlug = slug || title.toLowerCase().replace(/\s+/g, '-');
+
     category.subcategories.push({
       title,
-      slug: slug || title.toLowerCase().replace(/\s+/g, '-'),
+      slug: subcategorySlug,
       description,
       icon,
       order: order || 0,
+      sections: [{
+        title: title,
+        slug: subcategorySlug,
+        order: 0,
+        articles: [],
+        isPublished: true
+      }],
       articles: []
     });
 
@@ -451,7 +460,7 @@ exports.deleteSubcategory = async (req, res) => {
 exports.addArticle = async (req, res) => {
   try {
     const { categoryId, subcategoryId } = req.params;
-    const { title, content, slug, order, tags } = req.body;
+    const { title, content, slug, order, tags, question } = req.body;
 
     const category = await Education.findById(categoryId);
 
@@ -471,8 +480,23 @@ exports.addArticle = async (req, res) => {
       });
     }
 
-    subcategory.articles.push({
+    // Ensure sections array exists and has at least one section
+    if (!subcategory.sections || subcategory.sections.length === 0) {
+      // Create default section with subcategory name
+      subcategory.sections = [{
+        title: subcategory.title,
+        slug: subcategory.slug,
+        order: 0,
+        articles: [],
+        isPublished: true
+      }];
+    }
+
+    // Add article to the first section
+    const defaultSection = subcategory.sections[0];
+    defaultSection.articles.push({
       title,
+      question,
       content,
       slug: slug || title.toLowerCase().replace(/\s+/g, '-'),
       order: order || 0,
@@ -518,7 +542,19 @@ exports.updateArticle = async (req, res) => {
       });
     }
 
-    const article = subcategory.articles.id(articleId);
+    // Try to find article in sections first
+    let article = null;
+    if (subcategory.sections && subcategory.sections.length > 0) {
+      for (const section of subcategory.sections) {
+        article = section.articles.id(articleId);
+        if (article) break;
+      }
+    }
+
+    // Fallback to direct articles
+    if (!article) {
+      article = subcategory.articles.id(articleId);
+    }
 
     if (!article) {
       return res.status(404).json({
