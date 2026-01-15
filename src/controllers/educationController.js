@@ -612,7 +612,7 @@ exports.deleteSection = async (req, res) => {
 exports.addArticle = async (req, res) => {
   try {
     const { categoryId, subcategoryId } = req.params;
-    const { title, content, slug, order, tags, question } = req.body;
+    const { title, content, slug, order, tags, question, sectionId } = req.body;
 
     const category = await Education.findById(categoryId);
 
@@ -644,9 +644,23 @@ exports.addArticle = async (req, res) => {
       }];
     }
 
-    // Add article to the first section
-    const defaultSection = subcategory.sections[0];
-    defaultSection.articles.push({
+    // Find the target section
+    let targetSection;
+    if (sectionId) {
+      targetSection = subcategory.sections.id(sectionId);
+      if (!targetSection) {
+        return res.status(404).json({
+          success: false,
+          message: 'Section not found'
+        });
+      }
+    } else {
+      // Default to first section if no sectionId provided
+      targetSection = subcategory.sections[0];
+    }
+
+    // Add article to the target section
+    targetSection.articles.push({
       title,
       question,
       content,
