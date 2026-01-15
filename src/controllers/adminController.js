@@ -90,12 +90,12 @@ const registerAdmin = async (req, res) => {
 
     await admin.save();
 
-    try {
-      await sendWelcomeEmail(email, fullName || username, username);
-    } catch (emailError) {
+    // Send welcome email asynchronously (don't wait)
+    sendWelcomeEmail(email, fullName || username, username).catch(emailError => {
       console.error('Failed to send welcome email:', emailError);
-    }
+    });
 
+    // Return immediately
     res.status(201).json({
       success: true,
       message: 'Admin registered successfully',
