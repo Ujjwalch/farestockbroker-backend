@@ -2,9 +2,11 @@ const Education = require('../models/Education');
 
 exports.getAllCategories = async (req, res) => {
   try {
+    console.log("Listing categories.......");
     const categories = await Education.find({ isPublished: true })
       .sort({ order: 1 })
       .lean();
+
     
     const filteredCategories = categories.map(cat => ({
       ...cat,
@@ -48,6 +50,7 @@ exports.getAllCategories = async (req, res) => {
 
 exports.getCategoryBySlug = async (req, res) => {
   try {
+    console.log("Entered here.......");
     const category = await Education.findOne({ 
       slug: req.params.slug,
       isPublished: true 
@@ -98,6 +101,7 @@ exports.getCategoryBySlug = async (req, res) => {
 
 exports.getArticleBySlug = async (req, res) => {
   try {
+    console.log("getting article using slug")
     const { categorySlug, subcategorySlug, sectionSlug, articleSlug } = req.params;
 
     const category = await Education.findOne({ slug: categorySlug });
