@@ -788,3 +788,85 @@ exports.deleteArticle = async (req, res) => {
     });
   }
 };
+
+exports.fixExistingArticles = async (req, res) => {
+  try {
+    const categories = await Education.find({});
+    let totalArticlesFixed = 0;
+    let articlesWithoutQuestion = [];
+
+    for (const category of categories) {
+      let categoryModified = false;
+
+      for (const subcategory of category.subcategories) {
+        // Check sections
+        if (subcategory.sections && subcategory.sections.length > 0) {
+          for (const section of subcategory.sections) {
+            if (section.articles && section.articles.length > 0) {
+              for (const article of section.articles) {
+                // Fix missing isPublished flag
+                if (article.isPublished === undefined || article.isPublished === null) {
+                  article.isPublished = true;
+                  totalArticlesFixed++;
+                  categoryModified = true;
+                }
+
+                // Track articles without question
+                if (!article.question || article.question.trim() === '') {
+                  articlesWithoutQuestion.push({
+                    id: article._id,
+                    title: article.title,
+                    category: category.title,
+                    subcategory: subcategory.title,
+                    section: section.title
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // Check direct articles (backward compatibility)
+        if (subcategory.articles && subcategory.articles.length > 0) {
+          for (const article of subcategory.articles) {
+            if (article.isPublished === undefined || article.isPublished === null) {
+              article.isPublished = true;
+              totalArticlesFixed++;
+              categoryModified = true;
+            }
+
+            if (!article.question || article.question.trim() === '') {
+              articlesWithoutQuestion.push({
+                id: article._id,
+                title: article.title,
+                category: category.title,
+                subcategory: subcategory.title,
+                section: null
+              });
+            }
+          }
+        }
+      }
+
+      if (categoryModified) {
+        await category.save();
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Migration completed successfully',
+      stats: {
+        articlesFixed: totalArticlesFixed,
+        articlesNeedingQuestions: articlesWithoutQuestion.length
+      },
+      articlesWithoutQuestion
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error during migration',
+      error: error.message
+    });
+  }
+};

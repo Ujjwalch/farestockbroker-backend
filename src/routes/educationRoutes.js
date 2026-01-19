@@ -28,4 +28,7 @@ router.post('/admin/categories/:categoryId/subcategories/:subcategoryId/articles
 router.put('/admin/categories/:categoryId/subcategories/:subcategoryId/articles/:articleId', authenticateAdmin, educationController.updateArticle);
 router.delete('/admin/categories/:categoryId/subcategories/:subcategoryId/articles/:articleId', authenticateAdmin, educationController.deleteArticle);
 
+// Migration endpoint
+router.post('/admin/fix-existing-articles', authenticateAdmin, educationController.fixExistingArticles);
+
 module.exports = router;
