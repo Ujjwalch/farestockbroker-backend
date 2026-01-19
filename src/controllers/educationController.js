@@ -660,13 +660,16 @@ exports.addArticle = async (req, res) => {
     }
 
     // Add article to the target section
+    const generatedSlug = slug || (question || title).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    
     targetSection.articles.push({
       title,
       question,
       content,
-      slug: slug || title.toLowerCase().replace(/\s+/g, '-'),
+      slug: generatedSlug,
       order: order || 0,
-      tags: tags || []
+      tags: tags || [],
+      isPublished: true
     });
 
     await category.save();
