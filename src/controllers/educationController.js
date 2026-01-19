@@ -1,4 +1,5 @@
 const Education = require('../models/Education');
+const { generateSlug, sanitizeSlug, validateSlug } = require('../utils/slugUtils');
 
 exports.getAllCategories = async (req, res) => {
   try {
@@ -99,14 +100,19 @@ exports.getCategoryBySlug = async (req, res) => {
   }
 };
 
+// Replace the getArticleBySlug function in your educationController.js with this:
+
 exports.getArticleBySlug = async (req, res) => {
   try {
-    console.log("getting article using slug")
+    console.log("getting article using slug");
+    console.log("Request params:", req.params);
+    
     const { categorySlug, subcategorySlug, sectionSlug, articleSlug } = req.params;
 
     const category = await Education.findOne({ slug: categorySlug });
 
     if (!category) {
+      console.log("Category not found:", categorySlug);
       return res.status(404).json({
         success: false,
         message: 'Category not found'
@@ -116,47 +122,80 @@ exports.getArticleBySlug = async (req, res) => {
     const subcategory = category.subcategories.find(sub => sub.slug === subcategorySlug);
 
     if (!subcategory) {
+      console.log("Subcategory not found:", subcategorySlug);
       return res.status(404).json({
         success: false,
         message: 'Subcategory not found'
       });
     }
 
-    // Find section
     let section = null;
     let article = null;
     
-    if (sectionSlug) {
-      section = subcategory.sections?.find(sec => sec.slug === sectionSlug);
+    // Determine which slug is actually the article slug
+    // If we have 4 params: category/subcategory/section/article
+    // If we have 3 params: category/subcategory/article (sectionSlug is actually articleSlug)
+    const actualArticleSlug = articleSlug || sectionSlug;
+    const actualSectionSlug = articleSlug ? sectionSlug : null;
+    
+    console.log("Looking for article:", actualArticleSlug);
+    console.log("In section:", actualSectionSlug);
+    
+    // If we have a section slug, try to find the article in that specific section
+    if (actualSectionSlug && subcategory.sections) {
+      section = subcategory.sections.find(sec => sec.slug === actualSectionSlug);
       if (section) {
-        article = section.articles?.find(art => art.slug === articleSlug);
+        article = section.articles?.find(art => art.slug === actualArticleSlug);
+        console.log("Found in specified section:", !!article);
       }
     }
     
-    // Fallback: search in all sections if not found
-    if (!article && subcategory.sections) {
+    // If not found and we have sections, search in all sections
+    if (!article && subcategory.sections && subcategory.sections.length > 0) {
+      console.log("Searching in all sections...");
       for (const sec of subcategory.sections) {
-        article = sec.articles?.find(art => art.slug === articleSlug);
+        article = sec.articles?.find(art => art.slug === actualArticleSlug);
         if (article) {
           section = sec;
+          console.log("Found in section:", sec.title);
           break;
         }
       }
     }
     
-    // Fallback: search in direct articles
-    if (!article) {
-      article = subcategory.articles?.find(art => art.slug === articleSlug);
+    // Fallback: search in direct articles (backward compatibility)
+    if (!article && subcategory.articles) {
+      console.log("Searching in direct articles...");
+      article = subcategory.articles.find(art => art.slug === actualArticleSlug);
+      if (article) {
+        console.log("Found in direct articles");
+      }
     }
 
     if (!article) {
+      console.log("Article not found anywhere");
+      console.log("Available sections:", subcategory.sections?.map(s => s.slug));
+      console.log("Available articles in sections:", subcategory.sections?.map(s => ({
+        section: s.slug,
+        articles: s.articles?.map(a => a.slug)
+      })));
+      
       return res.status(404).json({
         success: false,
-        message: 'Article not found'
+        message: 'Article not found',
+        debug: {
+          categorySlug,
+          subcategorySlug,
+          sectionSlug: actualSectionSlug,
+          articleSlug: actualArticleSlug,
+          availableSections: subcategory.sections?.map(s => s.slug),
+          availableArticles: subcategory.sections?.flatMap(s => s.articles?.map(a => a.slug) || [])
+        }
       });
     }
 
-    article.views += 1;
+    // Increment views
+    article.views = (article.views || 0) + 1;
     await category.save();
 
     res.json({
@@ -169,9 +208,97 @@ exports.getArticleBySlug = async (req, res) => {
       }
     });
   } catch (error) {
+    console.error("Error in getArticleBySlug:", error);
     res.status(500).json({
       success: false,
       message: 'Error fetching article',
+      error: error.message
+    });
+  }
+};
+// Add this new function to your educationController.js
+
+exports.fixArticleSlugs = async (req, res) => {
+  try {
+    const categories = await Education.find({});
+    let totalFixed = 0;
+    const fixes = [];
+
+    for (const category of categories) {
+      let categoryModified = false;
+
+      for (const subcategory of category.subcategories) {
+        // Fix sections
+        if (subcategory.sections && subcategory.sections.length > 0) {
+          for (const section of subcategory.sections) {
+            if (section.articles && section.articles.length > 0) {
+              for (const article of section.articles) {
+                const oldSlug = article.slug;
+                // Remove invalid characters from slug
+                const newSlug = oldSlug
+                  .replace(/[^a-z0-9-]/g, '') // Remove anything that's not alphanumeric or hyphen
+                  .replace(/-+/g, '-') // Replace multiple hyphens with single hyphen
+                  .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+
+                if (oldSlug !== newSlug) {
+                  article.slug = newSlug;
+                  totalFixed++;
+                  categoryModified = true;
+                  fixes.push({
+                    category: category.title,
+                    subcategory: subcategory.title,
+                    section: section.title,
+                    oldSlug,
+                    newSlug,
+                    title: article.title || article.question
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // Fix direct articles (backward compatibility)
+        if (subcategory.articles && subcategory.articles.length > 0) {
+          for (const article of subcategory.articles) {
+            const oldSlug = article.slug;
+            const newSlug = oldSlug
+              .replace(/[^a-z0-9-]/g, '')
+              .replace(/-+/g, '-')
+              .replace(/^-|-$/g, '');
+
+            if (oldSlug !== newSlug) {
+              article.slug = newSlug;
+              totalFixed++;
+              categoryModified = true;
+              fixes.push({
+                category: category.title,
+                subcategory: subcategory.title,
+                section: null,
+                oldSlug,
+                newSlug,
+                title: article.title || article.question
+              });
+            }
+          }
+        }
+      }
+
+      if (categoryModified) {
+        await category.save();
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Fixed ${totalFixed} article slugs`,
+      totalFixed,
+      fixes
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fixing article slugs',
       error: error.message
     });
   }
@@ -260,20 +387,43 @@ exports.createCategory = async (req, res) => {
   try {
     const { title, slug, description, icon, order } = req.body;
 
-    const generatedSlug = slug || title.toLowerCase().replace(/\s+/g, '-');
+    // Generate or sanitize slug
+    let finalSlug;
+    if (slug) {
+      // Validate provided slug
+      const validation = validateSlug(slug);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid slug format',
+          errors: validation.errors
+        });
+      }
+      finalSlug = sanitizeSlug(slug);
+    } else {
+      // Generate slug from title
+      try {
+        finalSlug = generateSlug(title);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: error.message
+        });
+      }
+    }
     
     // Check if slug already exists
-    const existing = await Education.findOne({ slug: generatedSlug });
+    const existing = await Education.findOne({ slug: finalSlug });
     if (existing) {
       return res.status(400).json({
         success: false,
-        message: `Category with slug "${generatedSlug}" already exists. Please use a different title or slug.`
+        message: `Category with slug "${finalSlug}" already exists. Please use a different title or slug.`
       });
     }
 
     const category = new Education({
       title,
-      slug: generatedSlug,
+      slug: finalSlug,
       description,
       icon,
       order: order || 0,
@@ -368,17 +518,38 @@ exports.addSubcategory = async (req, res) => {
       });
     }
 
-    const subcategorySlug = slug || title.toLowerCase().replace(/\s+/g, '-');
+    // Generate or sanitize slug
+    let finalSlug;
+    if (slug) {
+      const validation = validateSlug(slug);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid slug format',
+          errors: validation.errors
+        });
+      }
+      finalSlug = sanitizeSlug(slug);
+    } else {
+      try {
+        finalSlug = generateSlug(title);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: error.message
+        });
+      }
+    }
 
     category.subcategories.push({
       title,
-      slug: subcategorySlug,
+      slug: finalSlug,
       description,
       icon,
       order: order || 0,
       sections: [{
         title: title,
-        slug: subcategorySlug,
+        slug: finalSlug,
         order: 0,
         articles: [],
         isPublished: true
@@ -495,7 +666,28 @@ exports.addSection = async (req, res) => {
       });
     }
 
-    const sectionSlug = slug || title.toLowerCase().replace(/\s+/g, '-');
+    // Generate or sanitize slug
+    let finalSlug;
+    if (slug) {
+      const validation = validateSlug(slug);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid slug format',
+          errors: validation.errors
+        });
+      }
+      finalSlug = sanitizeSlug(slug);
+    } else {
+      try {
+        finalSlug = generateSlug(title);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: error.message
+        });
+      }
+    }
 
     if (!subcategory.sections) {
       subcategory.sections = [];
@@ -503,7 +695,7 @@ exports.addSection = async (req, res) => {
 
     subcategory.sections.push({
       title,
-      slug: sectionSlug,
+      slug: finalSlug,
       order: order || 0,
       articles: [],
       isPublished: true
@@ -664,13 +856,36 @@ exports.addArticle = async (req, res) => {
     }
 
     // Add article to the target section
-    const generatedSlug = slug || (question || title).toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    // Generate or sanitize slug
+    let finalSlug;
+    if (slug) {
+      const validation = validateSlug(slug);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid slug format',
+          errors: validation.errors
+        });
+      }
+      finalSlug = sanitizeSlug(slug);
+    } else {
+      // Generate slug from question or title
+      const sourceText = question || title;
+      try {
+        finalSlug = generateSlug(sourceText);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: error.message
+        });
+      }
+    }
     
     targetSection.articles.push({
       title,
       question,
       content,
-      slug: generatedSlug,
+      slug: finalSlug,
       order: order || 0,
       tags: tags || [],
       isPublished: true

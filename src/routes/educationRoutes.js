@@ -9,6 +9,7 @@ router.get('/categories/:slug', educationController.getCategoryBySlug);
 router.get('/articles/:categorySlug/:subcategorySlug/:sectionSlug/:articleSlug', educationController.getArticleBySlug);
 router.get('/articles/:categorySlug/:subcategorySlug/:articleSlug', educationController.getArticleBySlug); // Fallback for old URLs
 router.get('/search', educationController.searchArticles);
+router.post('/admin/fix-article-slugs', authenticateAdmin, educationController.fixArticleSlugs);
 
 // Admin routes
 router.get('/admin/categories', authenticateAdmin, educationController.adminGetAllCategories);
