@@ -41,7 +41,7 @@ async function searchYahooTicker(query) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
         'Accept': 'application/json,text/plain,*/*',
       },
-      timeout: 10000, // 10 second timeout
+      timeout: 30000, // 30 second timeout
     });
 
     const data = res.data;
@@ -86,7 +86,7 @@ async function getYahooOpenForDate(symbol, listingDateStr) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
         'Accept': 'application/json,text/plain,*/*',
       },
-      timeout: 10000, // 10 second timeout
+      timeout: 30000, // 30 second timeout
     });
 
     const json = res.data;
@@ -128,7 +128,7 @@ exports.testYahooFinance = async (req, res) => {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json',
       },
-      timeout: 10000,
+      timeout: 30000, // 30 seconds
     });
     
     console.log('   ✅ Search API works');
@@ -143,7 +143,7 @@ exports.testYahooFinance = async (req, res) => {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json',
       },
-      timeout: 10000,
+      timeout: 30000, // 30 seconds
     });
     
     console.log('   ✅ Chart API works');
