@@ -468,11 +468,13 @@ exports.getBatchListingPrices = async (req, res) => {
             };
           }
 
-          // If symbol is provided, use it directly with .NS suffix
+          // If symbol is provided, use it directly with appropriate suffix
           let ticker = null;
           if (ipo.symbol) {
-            ticker = `${ipo.symbol}.NS`;
-            console.log(`   Using provided symbol: ${ticker}`);
+            // SME stocks are listed on BSE (.BO), Mainboard on NSE (.NS)
+            const suffix = ipo.isSME ? '.BO' : '.NS';
+            ticker = `${ipo.symbol}.${suffix === '.BO' ? 'BO' : 'NS'}`;
+            console.log(`   Using provided symbol: ${ticker} (${ipo.isSME ? 'BSE SME' : 'NSE'})`);
           } else {
             // Search for ticker (will try multiple variations)
             console.log(`   Searching for: "${ipo.companyName}"`);
