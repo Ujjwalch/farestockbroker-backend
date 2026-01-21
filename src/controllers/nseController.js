@@ -468,9 +468,16 @@ exports.getBatchListingPrices = async (req, res) => {
             };
           }
 
-          // Search for ticker (will try multiple variations including symbol if provided)
-          console.log(`   Searching for: "${ipo.companyName}"${ipo.symbol ? ` (symbol: ${ipo.symbol})` : ''}`);
-          const ticker = await searchYahooTicker(ipo.companyName, ipo.symbol);
+          // If symbol is provided, use it directly with .NS suffix
+          let ticker = null;
+          if (ipo.symbol) {
+            ticker = `${ipo.symbol}.NS`;
+            console.log(`   Using provided symbol: ${ticker}`);
+          } else {
+            // Search for ticker (will try multiple variations)
+            console.log(`   Searching for: "${ipo.companyName}"`);
+            ticker = await searchYahooTicker(ipo.companyName, ipo.symbol);
+          }
 
           if (!ticker) {
             console.log(`❌ ${ipo.companyName}: Ticker not found`);
