@@ -1,134 +1,176 @@
 const axios = require('axios');
 
+// In-memory cache
+const CACHE = new Map();
+const CACHE_TTL_MS = 1000 * 60 * 30; // 30 minutes
+
 /**
- * NSE needs cookies + browser-like headers.
- * We'll fetch homepage once to get cookies.
+ * Format date to YYYY-MM-DD
  */
-async function getNseCookies() {
-  try {
-    const res = await axios.get('https://www.nseindia.com', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Connection': 'keep-alive',
-      },
-    });
+function formatDateYYYYMMDD(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
 
-    const rawCookies = res.headers['set-cookie'];
-    if (!rawCookies) return '';
-
-    return rawCookies.map((c) => c.split(';')[0]).join('; ');
-  } catch (error) {
-    console.error('Error getting NSE cookies:', error.message);
-    return '';
-  }
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 /**
- * NSE Autocomplete Search
- * Converts companyName -> NSE Symbol
+ * Strip company suffix for better search
  */
-async function searchNseSymbol(companyName) {
-  const cookies = await getNseCookies();
+function stripCompanySuffix(name = '') {
+  return name
+    .replace(/\b(limited|ltd|private|pvt|pvt\.|inc|co)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
-  const url = `https://www.nseindia.com/api/search/autocomplete?q=${encodeURIComponent(companyName)}`;
+/**
+ * Yahoo Search: companyName -> best ticker
+ */
+async function searchYahooTicker(query) {
+  const q = encodeURIComponent(query);
+  const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${q}&quotesCount=6&newsCount=0`;
 
   const res = await axios.get(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
       'Accept': 'application/json,text/plain,*/*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Referer': 'https://www.nseindia.com/',
-      'Cookie': cookies,
-      'Connection': 'keep-alive',
     },
   });
 
   const data = res.data;
-  const list = Array.isArray(data) ? data : data?.symbols || [];
+  const quotes = data?.quotes || [];
 
-  if (!list.length) return null;
+  // Prefer Indian tickers (.NS / .BO)
+  const indian = quotes.find((x) => x?.symbol?.endsWith('.NS')) ||
+                 quotes.find((x) => x?.symbol?.endsWith('.BO'));
 
-  // Best pick: first result
-  const first = list[0];
-  const symbol = first?.symbol;
-
-  return symbol || null;
+  return indian?.symbol || quotes?.[0]?.symbol || null;
 }
 
 /**
- * NSE Quote API: Get open price etc.
+ * Yahoo Chart API - Get open price for listing date
  */
-async function getNseQuote(symbol) {
-  const cookies = await getNseCookies();
+async function getYahooOpenForDate(symbol, listingDateStr) {
+  const listingDate = new Date(listingDateStr);
+  if (isNaN(listingDate.getTime())) return null;
 
-  const url = `https://www.nseindia.com/api/quote-equity?symbol=${encodeURIComponent(symbol)}`;
+  // Yahoo chart API needs unix seconds
+  const start = Math.floor(listingDate.getTime() / 1000);
+  const end = start + 86400; // +1 day
+
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+    symbol
+  )}?period1=${start}&period2=${end}&interval=1d`;
 
   const res = await axios.get(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
       'Accept': 'application/json,text/plain,*/*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Referer': `https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(symbol)}`,
-      'Cookie': cookies,
-      'Connection': 'keep-alive',
     },
   });
 
-  return res.data;
+  const json = res.data;
+  const result = json?.chart?.result?.[0];
+  const quote = result?.indicators?.quote?.[0];
+
+  const open = quote?.open?.[0] ?? null;
+  const close = quote?.close?.[0] ?? null;
+
+  if (open == null) return null;
+
+  return { open, close };
 }
 
 /**
- * Get listing price from NSE for a company
+ * Get listing price using Yahoo Finance
  */
 exports.getListingPrice = async (req, res) => {
   try {
-    const { companyName, symbol } = req.query;
+    const { companyName, listingDate, ipoId } = req.query;
 
-    if (!companyName && !symbol) {
+    if (!companyName) {
       return res.status(400).json({
         success: false,
-        message: 'Either companyName or symbol is required',
+        message: 'companyName is required',
       });
     }
 
-    // If symbol is provided, use it directly
-    let nseSymbol = symbol;
+    // Check cache first
+    const cacheKey = `listing_${ipoId || companyName}`;
+    const cached = CACHE.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      console.log(`Cache hit for ${companyName}`);
+      return res.json(cached.data);
+    }
 
-    // Otherwise, search for symbol using company name
-    if (!nseSymbol && companyName) {
-      nseSymbol = await searchNseSymbol(companyName);
-
-      if (!nseSymbol) {
-        return res.status(404).json({
-          success: false,
-          message: 'Could not find NSE symbol for this company',
-          companyName,
-        });
+    // If no listing date provided, try to fetch from IPO API
+    let finalListingDate = listingDate;
+    if (!finalListingDate && ipoId) {
+      try {
+        const ipoDetails = await getIPODetails(ipoId);
+        finalListingDate = ipoDetails?.listingDate;
+      } catch (err) {
+        console.warn(`Could not fetch IPO details for ${ipoId}:`, err.message);
       }
     }
 
-    // Fetch NSE quote
-    const quote = await getNseQuote(nseSymbol);
-    const openPrice = quote?.priceInfo?.open ?? null;
-    const lastPrice = quote?.priceInfo?.lastPrice ?? null;
-    const closePrice = quote?.priceInfo?.close ?? null;
+    if (!finalListingDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'listingDate is required (or provide ipoId)',
+      });
+    }
 
-    return res.json({
+    // Search for ticker
+    const cleanName = stripCompanySuffix(companyName);
+    const ticker = await searchYahooTicker(cleanName);
+
+    if (!ticker) {
+      return res.status(404).json({
+        success: false,
+        message: 'Could not find ticker symbol for this company',
+        companyName,
+      });
+    }
+
+    // Get open price for listing date
+    const priceData = await getYahooOpenForDate(ticker, finalListingDate);
+
+    if (!priceData || priceData.open == null) {
+      return res.status(404).json({
+        success: false,
+        message: 'Could not fetch listing price for this date',
+        ticker,
+        listingDate: finalListingDate,
+      });
+    }
+
+    const responseData = {
       success: true,
       message: 'Listing price fetched successfully',
       data: {
-        companyName: companyName || quote?.info?.companyName,
-        nseSymbol,
-        listingPrice: openPrice, // Open price on listing day
-        lastPrice,
-        closePrice,
-        priceInfo: quote?.priceInfo,
+        companyName,
+        ticker,
+        listingDate: finalListingDate,
+        listingPrice: priceData.open,
+        closePrice: priceData.close,
       },
+    };
+
+    // Cache the result
+    CACHE.set(cacheKey, {
+      data: responseData,
+      timestamp: Date.now(),
     });
+
+    return res.json(responseData);
   } catch (error) {
-    console.error('NSE API Error:', error.message);
+    console.error('Yahoo Finance API Error:', error.message);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -137,11 +179,11 @@ exports.getListingPrice = async (req, res) => {
 };
 
 /**
- * Batch fetch listing prices for multiple IPOs
+ * Batch fetch listing prices for multiple IPOs using Yahoo Finance
  */
 exports.getBatchListingPrices = async (req, res) => {
   try {
-    const { ipos } = req.body; // Array of { companyName, ipoId }
+    const { ipos } = req.body; // Array of { companyName, ipoId, listingDate? }
 
     if (!Array.isArray(ipos) || ipos.length === 0) {
       return res.status(400).json({
@@ -150,29 +192,88 @@ exports.getBatchListingPrices = async (req, res) => {
       });
     }
 
+    console.log(`\n📊 Batch listing price request for ${ipos.length} IPOs`);
+
     const results = await Promise.allSettled(
       ipos.map(async (ipo) => {
         try {
-          const nseSymbol = await searchNseSymbol(ipo.companyName);
-          if (!nseSymbol) {
+          // Check cache first
+          const cacheKey = `listing_${ipo.ipoId || ipo.companyName}`;
+          const cached = CACHE.get(cacheKey);
+          if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+            console.log(`✅ Cache hit: ${ipo.companyName}`);
+            return cached.data.data; // Return the data portion
+          }
+
+          // Get listing date
+          let finalListingDate = ipo.listingDate;
+          if (!finalListingDate && ipo.ipoId) {
+            try {
+              const ipoDetails = await getIPODetails(ipo.ipoId);
+              finalListingDate = ipoDetails?.listingDate;
+            } catch (err) {
+              console.warn(`⚠️  Could not fetch IPO details for ${ipo.companyName}:`, err.message);
+            }
+          }
+
+          if (!finalListingDate) {
+            console.log(`❌ ${ipo.companyName}: No listing date available`);
             return {
               ipoId: ipo.ipoId,
               companyName: ipo.companyName,
               success: false,
-              error: 'Symbol not found',
+              error: 'Listing date not available',
             };
           }
 
-          const quote = await getNseQuote(nseSymbol);
-          return {
+          // Search for ticker
+          const cleanName = stripCompanySuffix(ipo.companyName);
+          const ticker = await searchYahooTicker(cleanName);
+
+          if (!ticker) {
+            console.log(`❌ ${ipo.companyName}: Ticker not found`);
+            return {
+              ipoId: ipo.ipoId,
+              companyName: ipo.companyName,
+              success: false,
+              error: 'Ticker not found',
+            };
+          }
+
+          // Get open price for listing date
+          const priceData = await getYahooOpenForDate(ticker, finalListingDate);
+
+          if (!priceData || priceData.open == null) {
+            console.log(`❌ ${ipo.companyName} (${ticker}): No price data for ${finalListingDate}`);
+            return {
+              ipoId: ipo.ipoId,
+              companyName: ipo.companyName,
+              ticker,
+              success: false,
+              error: 'Price data not available',
+            };
+          }
+
+          console.log(`✅ ${ipo.companyName} (${ticker}): ₹${priceData.open.toFixed(2)}`);
+
+          const result = {
             ipoId: ipo.ipoId,
             companyName: ipo.companyName,
-            nseSymbol,
-            listingPrice: quote?.priceInfo?.open ?? null,
-            lastPrice: quote?.priceInfo?.lastPrice ?? null,
+            ticker,
+            listingPrice: priceData.open,
+            lastPrice: priceData.close,
             success: true,
           };
+
+          // Cache the result
+          CACHE.set(cacheKey, {
+            data: { data: result },
+            timestamp: Date.now(),
+          });
+
+          return result;
         } catch (error) {
+          console.error(`❌ ${ipo.companyName}: ${error.message}`);
           return {
             ipoId: ipo.ipoId,
             companyName: ipo.companyName,
@@ -187,15 +288,45 @@ exports.getBatchListingPrices = async (req, res) => {
       result.status === 'fulfilled' ? result.value : result.reason
     );
 
+    const successCount = data.filter(d => d.success).length;
+    console.log(`\n📊 Batch complete: ${successCount}/${ipos.length} successful\n`);
+
     return res.json({
       success: true,
       message: 'Batch listing prices fetched',
       data,
     });
   } catch (error) {
+    console.error('❌ Batch listing prices error:', error.message);
     return res.status(500).json({
       success: false,
       message: error.message,
     });
   }
 };
+
+/**
+ * Helper: Get IPO details from ipoapi.in
+ */
+async function getIPODetails(ipoId) {
+  const apiKey = process.env.IPO_API_KEY;
+  const apiSecret = process.env.IPO_API_SECRET;
+
+  if (!apiKey || !apiSecret) {
+    throw new Error('IPO API credentials not configured');
+  }
+
+  const url = `https://api.ipoapi.in/api/ipo/${ipoId}`;
+  const res = await axios.get(url, {
+    headers: {
+      ApiKey: apiKey,
+      ApiSecret: apiSecret,
+    },
+  });
+
+  if (!res.data || !res.data.isSuccess) {
+    throw new Error('Failed to fetch IPO details');
+  }
+
+  return res.data.data;
+}
