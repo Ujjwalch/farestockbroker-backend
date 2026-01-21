@@ -156,3 +156,5 @@ sessions/
 EDUCATION_SECTIONS_GUIDE.md
 test-local-batch.js
 test-railway-batch.js
+*.md
+verify-yajur-yahoo.js

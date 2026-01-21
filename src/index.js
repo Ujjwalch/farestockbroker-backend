@@ -11,9 +11,11 @@ const contentRoutes = require('./routes/contentRoutes');
 const leadRoutes = require('./routes/leadRoutes');
 const educationRoutes = require('./routes/educationRoutes');
 const ipoRoutes = require('./routes/ipoRoutes');
+const ipoCacheRoutes = require('./routes/ipoCacheRoutes');
 const nseRoutes = require('./routes/nseRoutes');
 const connetDB = require('./config/database');
 const { startWorldIpoCron } = require('./jobs/worldIpoCron');
+const { startIPOSyncCron } = require('./jobs/ipoSyncCron');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -28,6 +30,7 @@ app.use('/api/content', contentRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/education', educationRoutes);
 app.use('/api/ipo', ipoRoutes);
+app.use('/api/ipo-cache', ipoCacheRoutes); // Fast cached IPO data
 app.use('/api/nse', nseRoutes);
 
 app.get('/api/health', (req, res) => {
@@ -53,5 +56,6 @@ app.use('*', (req, res) => {
 app.listen(PORT, () => {
   connetDB();
   startWorldIpoCron();
+  startIPOSyncCron(); // Start IPO data sync cron
   console.log(`Server is running on port ${PORT}`);
 });
