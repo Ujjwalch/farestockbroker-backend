@@ -1,98 +1,154 @@
-const WorldIPO = require("../models/WorldIPO");
-const { scrapeRenaissanceIpoCalendar } = require("../services/worldIpoScraper");
-const { scrapeAllIndianIPOs } = require("../services/indiaIpoScraper");
+const axios = require('axios');
 
-/**
- * GET /api/ipo
- * Returns DB stored IPOs
- */
-exports.getAllIPOs = async (req, res) => {
+const IPO_API_KEY = process.env.IPO_API_KEY;
+const IPO_API_SECRET = process.env.IPO_API_SECRET;
+const IPO_API_BASE_URL = process.env.IPO_API_BASE_URL || 'https://api.ipoapi.in/api';
+
+// Helper function to make IPO API requests
+const makeIPORequest = async (endpoint) => {
   try {
-    const { upcoming = "true", limit = "100" } = req.query;
+    const config = {
+      method: 'get',
+      maxBodyLength: Infinity,
+      url: `${IPO_API_BASE_URL}${endpoint}`,
+      headers: {
+        'ApiKey': IPO_API_KEY,
+        'ApiSecret': IPO_API_SECRET
+      }
+    };
 
-    let query = {};
-    if (upcoming === "true") {
-      query = { ipoDate: { $ne: null } };
-    }
-
-    const data = await WorldIPO.find(query)
-      .sort({ ipoDate: 1, company: 1 })
-      .limit(Number(limit));
-
-    return res.json({ success: true, count: data.length, data });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    const response = await axios.request(config);
+    return response.data;
+  } catch (error) {
+    console.error('IPO API Error:', error.message);
+    throw new Error(error.response?.data?.message || 'Failed to fetch IPO data');
   }
 };
 
-/**
- * GET /api/ipo/:id
- * Get IPO details by ID
- */
+// Get all mainboard IPOs
+exports.getMainboardIPOs = async (req, res) => {
+  try {
+    const data = await makeIPORequest('/mainboard');
+    res.json({
+      success: true,
+      ...data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Get all SME IPOs
+exports.getSMEIPOs = async (req, res) => {
+  try {
+    const data = await makeIPORequest('/sme');
+    res.json({
+      success: true,
+      ...data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Get IPO details by ID
 exports.getIPODetails = async (req, res) => {
   try {
     const { id } = req.params;
-    const data = await WorldIPO.findById(id);
-
-    if (!data) {
-      return res.status(404).json({ success: false, message: "IPO not found" });
-    }
-
-    return res.json({ success: true, data });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    const data = await makeIPORequest(`/ipo/${id}`);
+    res.json({
+      success: true,
+      ...data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 };
 
-/**
- * POST /api/ipo/refresh
- * Scrapes fresh IPOs and stores in DB
- */
-exports.refreshIPOs = async (req, res) => {
+// Get all IPOs (combined mainboard and SME)
+exports.getAllIPOs = async (req, res) => {
   try {
-    // Scrape from both sources
-    const [worldIPOs, indiaIPOs] = await Promise.all([
-      scrapeRenaissanceIpoCalendar().catch(err => {
-        console.error('[World IPO] Error:', err.message);
-        return [];
-      }),
-      scrapeAllIndianIPOs().catch(err => {
-        console.error('[India IPO] Error:', err.message);
-        return [];
-      })
-    ]);
+    const { type } = req.query; // 'mainboard', 'sme', or 'all'
+    
+    if (type === 'sme') {
+      const data = await makeIPORequest('/sme');
+      return res.json({
+        success: true,
+        ...data
+      });
+    } else if (type === 'mainboard') {
+      const data = await makeIPORequest('/mainboard');
+      return res.json({
+        success: true,
+        ...data
+      });
+    } else {
+      // Get both mainboard and SME
+      const [mainboardData, smeData] = await Promise.all([
+        makeIPORequest('/mainboard'),
+        makeIPORequest('/sme')
+      ]);
 
-    const scraped = [...worldIPOs, ...indiaIPOs];
+      const combinedData = [
+        ...(mainboardData.data || []),
+        ...(smeData.data || [])
+      ];
 
-    let inserted = 0;
-    let updated = 0;
-
-    for (const item of scraped) {
-      const filter = {
-        company: item.company,
-        source: item.source,
-      };
-
-      const updateDoc = { $set: item };
-
-      const existing = await WorldIPO.findOne(filter);
-      if (!existing) {
-        await WorldIPO.create(item);
-        inserted++;
-      } else {
-        await WorldIPO.updateOne({ _id: existing._id }, updateDoc);
-        updated++;
-      }
+      res.json({
+        success: true,
+        isSuccess: true,
+        message: 'Successfully fetched all IPOs',
+        totalRowCount: combinedData.length,
+        data: combinedData
+      });
     }
-
-    return res.json({
-      success: true,
-      scraped: scraped.length,
-      inserted,
-      updated,
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
-  } catch (err) {
-    console.error('[IPO] Refresh error:', err);
-    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// Get IPO subscription status
+exports.getIPOSubscription = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = await makeIPORequest(`/subscription/${id}`);
+    res.json({
+      success: true,
+      ...data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Get IPO GMP (Grey Market Premium)
+exports.getIPOGMP = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = await makeIPORequest(`/gmp/${id}`);
+    res.json({
+      success: true,
+      ...data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 };
