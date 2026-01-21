@@ -61,9 +61,44 @@ function formatDateYYYYMMDD(dateStr) {
  */
 function stripCompanySuffix(name = '') {
   return name
-    .replace(/\b(limited|ltd|private|pvt|pvt\.|inc|co)\b/gi, '')
+    .replace(/\b(limited|ltd|private|pvt|pvt\.|inc|co|corporation|corp)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Get search variations for better ticker matching
+ */
+function getSearchVariations(companyName, symbol = null) {
+  const variations = [];
+  
+  // If symbol is provided, try it first
+  if (symbol) {
+    variations.push(symbol);
+  }
+  
+  // Original name
+  variations.push(companyName);
+  
+  // Without suffix
+  const withoutSuffix = stripCompanySuffix(companyName);
+  if (withoutSuffix !== companyName) {
+    variations.push(withoutSuffix);
+  }
+  
+  // First word only (for companies like "Amagi Media Labs" -> "Amagi")
+  const firstWord = companyName.split(' ')[0];
+  if (firstWord.length > 3) {
+    variations.push(firstWord);
+  }
+  
+  // First two words
+  const words = companyName.split(' ');
+  if (words.length >= 2) {
+    variations.push(`${words[0]} ${words[1]}`);
+  }
+  
+  return variations;
 }
 
 /**
@@ -104,42 +139,54 @@ async function getNSEPublicQuote(symbol) {
 }
 
 /**
- * Yahoo Search: companyName -> best ticker (with retry)
+ * Yahoo Search: companyName -> best ticker (with retry and variations)
  */
 async function searchYahooTicker(query) {
-  return retryRequest(async () => {
-    const q = encodeURIComponent(query);
-    const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${q}&quotesCount=6&newsCount=0`;
+  const variations = getSearchVariations(query);
+  
+  for (const searchTerm of variations) {
+    try {
+      console.log(`   Trying search: "${searchTerm}"`);
+      
+      const ticker = await retryRequest(async () => {
+        const q = encodeURIComponent(searchTerm);
+        const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${q}&quotesCount=6&newsCount=0`;
 
-    const res = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
-        'Accept': 'application/json,text/plain,*/*',
-        'Connection': 'keep-alive',
-      },
-      timeout: 60000,
-      httpAgent,
-      httpsAgent,
-      maxRedirects: 5,
-      validateStatus: (status) => status < 500,
-    });
+        const res = await axios.get(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+            'Accept': 'application/json,text/plain,*/*',
+            'Connection': 'keep-alive',
+          },
+          timeout: 60000,
+          httpAgent,
+          httpsAgent,
+          maxRedirects: 5,
+          validateStatus: (status) => status < 500,
+        });
 
-    const data = res.data;
-    const quotes = data?.quotes || [];
+        const data = res.data;
+        const quotes = data?.quotes || [];
 
-    // Prefer Indian tickers (.NS / .BO)
-    const indian = quotes.find((x) => x?.symbol?.endsWith('.NS')) ||
-                   quotes.find((x) => x?.symbol?.endsWith('.BO'));
+        // Prefer Indian tickers (.NS / .BO)
+        const indian = quotes.find((x) => x?.symbol?.endsWith('.NS')) ||
+                       quotes.find((x) => x?.symbol?.endsWith('.BO'));
 
-    return indian?.symbol || quotes?.[0]?.symbol || null;
-  }, 3, 1000).catch(error => {
-    console.error(`   Yahoo Search Error for "${query}":`, {
-      message: error.message,
-      code: error.code,
-      status: error.response?.status,
-    });
-    throw new Error(`Yahoo Search failed after retries: ${error.message || error.code || 'Unknown error'}`);
-  });
+        return indian?.symbol || quotes?.[0]?.symbol || null;
+      }, 2, 500); // Reduced retries for variations
+      
+      if (ticker) {
+        console.log(`   ✅ Found ticker: ${ticker} (using "${searchTerm}")`);
+        return ticker;
+      }
+    } catch (error) {
+      console.log(`   ❌ Search failed for "${searchTerm}": ${error.message}`);
+      // Continue to next variation
+    }
+  }
+  
+  console.error(`   No ticker found for "${query}" after trying ${variations.length} variations`);
+  throw new Error(`Ticker not found after trying: ${variations.join(', ')}`);
 }
 
 /**
@@ -421,10 +468,9 @@ exports.getBatchListingPrices = async (req, res) => {
             };
           }
 
-          // Search for ticker
-          const cleanName = stripCompanySuffix(ipo.companyName);
-          console.log(`   Searching for: "${cleanName}"`);
-          const ticker = await searchYahooTicker(cleanName);
+          // Search for ticker (will try multiple variations including symbol if provided)
+          console.log(`   Searching for: "${ipo.companyName}"${ipo.symbol ? ` (symbol: ${ipo.symbol})` : ''}`);
+          const ticker = await searchYahooTicker(ipo.companyName, ipo.symbol);
 
           if (!ticker) {
             console.log(`❌ ${ipo.companyName}: Ticker not found`);
