@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const nseController = require('../controllers/nseController');
 
+// Test Yahoo Finance connectivity
+router.get('/test-yahoo', nseController.testYahooFinance);
+
 // Get listing price for a single company
 // GET /api/nse/listing-price?companyName=Bajaj Housing Finance Limited
 // OR

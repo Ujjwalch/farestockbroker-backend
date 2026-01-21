@@ -53,8 +53,13 @@ async function searchYahooTicker(query) {
 
     return indian?.symbol || quotes?.[0]?.symbol || null;
   } catch (error) {
-    console.error(`   Yahoo Search Error for "${query}": ${error.message}`);
-    throw error;
+    console.error(`   Yahoo Search Error for "${query}":`, {
+      message: error.message,
+      code: error.code,
+      status: error.response?.status,
+      data: error.response?.data
+    });
+    throw new Error(`Yahoo Search failed: ${error.message || error.code || 'Unknown error'}`);
   }
 }
 
@@ -97,10 +102,85 @@ async function getYahooOpenForDate(symbol, listingDateStr) {
 
     return { open, close };
   } catch (error) {
-    console.error(`   Yahoo Chart Error for ${symbol}: ${error.message}`);
-    throw error;
+    console.error(`   Yahoo Chart Error for ${symbol}:`, {
+      message: error.message,
+      code: error.code,
+      status: error.response?.status,
+      data: error.response?.data
+    });
+    throw new Error(`Yahoo Chart failed: ${error.message || error.code || 'Unknown error'}`);
   }
 }
+
+/**
+ * Test endpoint to verify Yahoo Finance connectivity
+ */
+exports.testYahooFinance = async (req, res) => {
+  try {
+    console.log('\n🧪 Testing Yahoo Finance connectivity...');
+    
+    // Test 1: Search API
+    console.log('1. Testing Yahoo Search API...');
+    const searchUrl = 'https://query2.finance.yahoo.com/v1/finance/search?q=Amagi&quotesCount=6&newsCount=0';
+    
+    const searchRes = await axios.get(searchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+      },
+      timeout: 10000,
+    });
+    
+    console.log('   ✅ Search API works');
+    console.log('   Found quotes:', searchRes.data?.quotes?.length || 0);
+    
+    // Test 2: Chart API
+    console.log('2. Testing Yahoo Chart API...');
+    const chartUrl = 'https://query1.finance.yahoo.com/v8/finance/chart/AMAGI.NS?period1=1737417600&period2=1737504000&interval=1d';
+    
+    const chartRes = await axios.get(chartUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+      },
+      timeout: 10000,
+    });
+    
+    console.log('   ✅ Chart API works');
+    
+    return res.json({
+      success: true,
+      message: 'Yahoo Finance APIs are accessible',
+      tests: {
+        search: {
+          success: true,
+          quotesFound: searchRes.data?.quotes?.length || 0,
+          quotes: searchRes.data?.quotes || []
+        },
+        chart: {
+          success: true,
+          hasData: !!chartRes.data?.chart?.result?.[0]
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Yahoo Finance test failed:', error.message);
+    console.error('   Error code:', error.code);
+    console.error('   Error response:', error.response?.status, error.response?.statusText);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Yahoo Finance test failed',
+      error: {
+        message: error.message,
+        code: error.code,
+        status: error.response?.status,
+        statusText: error.response?.statusText
+      }
+    });
+  }
+};
 
 /**
  * Get listing price using Yahoo Finance
