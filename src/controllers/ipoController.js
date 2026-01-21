@@ -191,3 +191,73 @@ exports.getIPOGMP = async (req, res) => {
     });
   }
 };
+
+// Get IPO Reservation details
+exports.getIPOReservation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = await makeIPORequest(`/reservation/${id}`);
+    res.json({
+      success: true,
+      ...data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Get Basis of Allotment list
+exports.getBasisOfAllotment = async (req, res) => {
+  try {
+    const { year, type } = req.query;
+    
+    // Default to current year and 'all' type if not provided
+    const currentYear = new Date().getFullYear();
+    const queryYear = year || currentYear;
+    const queryType = type || 'all';
+    
+    const endpoint = `/basis-of-allotment/${queryYear}/${queryType}`;
+    const data = await makeIPORequest(endpoint);
+    
+    res.json({
+      success: true,
+      ...data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Get GMP List (all IPOs with GMP)
+exports.getGMPList = async (req, res) => {
+  try {
+    const { pageNumber, perPageRow } = req.query;
+    let endpoint = '/gmp-list';
+    
+    // Build query parameters
+    const params = new URLSearchParams();
+    if (pageNumber) params.append('pageNumber', pageNumber);
+    if (perPageRow) params.append('perPageRow', perPageRow);
+    
+    if (params.toString()) {
+      endpoint += `?${params.toString()}`;
+    }
+    
+    const data = await makeIPORequest(endpoint);
+    res.json({
+      success: true,
+      ...data
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
