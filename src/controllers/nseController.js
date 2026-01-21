@@ -32,58 +32,74 @@ function stripCompanySuffix(name = '') {
  * Yahoo Search: companyName -> best ticker
  */
 async function searchYahooTicker(query) {
-  const q = encodeURIComponent(query);
-  const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${q}&quotesCount=6&newsCount=0`;
+  try {
+    const q = encodeURIComponent(query);
+    const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${q}&quotesCount=6&newsCount=0`;
 
-  const res = await axios.get(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
-      'Accept': 'application/json,text/plain,*/*',
-    },
-  });
+    const res = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+        'Accept': 'application/json,text/plain,*/*',
+      },
+      timeout: 10000, // 10 second timeout
+    });
 
-  const data = res.data;
-  const quotes = data?.quotes || [];
+    const data = res.data;
+    const quotes = data?.quotes || [];
 
-  // Prefer Indian tickers (.NS / .BO)
-  const indian = quotes.find((x) => x?.symbol?.endsWith('.NS')) ||
-                 quotes.find((x) => x?.symbol?.endsWith('.BO'));
+    // Prefer Indian tickers (.NS / .BO)
+    const indian = quotes.find((x) => x?.symbol?.endsWith('.NS')) ||
+                   quotes.find((x) => x?.symbol?.endsWith('.BO'));
 
-  return indian?.symbol || quotes?.[0]?.symbol || null;
+    return indian?.symbol || quotes?.[0]?.symbol || null;
+  } catch (error) {
+    console.error(`   Yahoo Search Error for "${query}": ${error.message}`);
+    throw error;
+  }
 }
 
 /**
  * Yahoo Chart API - Get open price for listing date
  */
 async function getYahooOpenForDate(symbol, listingDateStr) {
-  const listingDate = new Date(listingDateStr);
-  if (isNaN(listingDate.getTime())) return null;
+  try {
+    const listingDate = new Date(listingDateStr);
+    if (isNaN(listingDate.getTime())) {
+      throw new Error(`Invalid listing date: ${listingDateStr}`);
+    }
 
-  // Yahoo chart API needs unix seconds
-  const start = Math.floor(listingDate.getTime() / 1000);
-  const end = start + 86400; // +1 day
+    // Yahoo chart API needs unix seconds
+    const start = Math.floor(listingDate.getTime() / 1000);
+    const end = start + 86400; // +1 day
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-    symbol
-  )}?period1=${start}&period2=${end}&interval=1d`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+      symbol
+    )}?period1=${start}&period2=${end}&interval=1d`;
 
-  const res = await axios.get(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
-      'Accept': 'application/json,text/plain,*/*',
-    },
-  });
+    const res = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+        'Accept': 'application/json,text/plain,*/*',
+      },
+      timeout: 10000, // 10 second timeout
+    });
 
-  const json = res.data;
-  const result = json?.chart?.result?.[0];
-  const quote = result?.indicators?.quote?.[0];
+    const json = res.data;
+    const result = json?.chart?.result?.[0];
+    const quote = result?.indicators?.quote?.[0];
 
-  const open = quote?.open?.[0] ?? null;
-  const close = quote?.close?.[0] ?? null;
+    const open = quote?.open?.[0] ?? null;
+    const close = quote?.close?.[0] ?? null;
 
-  if (open == null) return null;
+    if (open == null) {
+      throw new Error(`No price data available for ${symbol} on ${listingDateStr}`);
+    }
 
-  return { open, close };
+    return { open, close };
+  } catch (error) {
+    console.error(`   Yahoo Chart Error for ${symbol}: ${error.message}`);
+    throw error;
+  }
 }
 
 /**
@@ -194,8 +210,18 @@ exports.getBatchListingPrices = async (req, res) => {
 
     console.log(`\n📊 Batch listing price request for ${ipos.length} IPOs`);
 
-    const results = await Promise.allSettled(
-      ipos.map(async (ipo) => {
+    // Process in smaller batches to avoid rate limiting
+    const BATCH_SIZE = 5;
+    const DELAY_MS = 1000; // 1 second delay between batches
+    
+    const allResults = [];
+    
+    for (let i = 0; i < ipos.length; i += BATCH_SIZE) {
+      const batch = ipos.slice(i, i + BATCH_SIZE);
+      console.log(`\n📦 Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(ipos.length / BATCH_SIZE)} (${batch.length} IPOs)`);
+      
+      const batchResults = await Promise.allSettled(
+        batch.map(async (ipo) => {
         try {
           // Check cache first
           const cacheKey = `listing_${ipo.ipoId || ipo.companyName}`;
@@ -228,6 +254,7 @@ exports.getBatchListingPrices = async (req, res) => {
 
           // Search for ticker
           const cleanName = stripCompanySuffix(ipo.companyName);
+          console.log(`   Searching for: "${cleanName}"`);
           const ticker = await searchYahooTicker(cleanName);
 
           if (!ticker) {
@@ -239,6 +266,8 @@ exports.getBatchListingPrices = async (req, res) => {
               error: 'Ticker not found',
             };
           }
+
+          console.log(`   Found ticker: ${ticker}`);
 
           // Get open price for listing date
           const priceData = await getYahooOpenForDate(ticker, finalListingDate);
@@ -274,17 +303,27 @@ exports.getBatchListingPrices = async (req, res) => {
           return result;
         } catch (error) {
           console.error(`❌ ${ipo.companyName}: ${error.message}`);
+          console.error(`   Stack: ${error.stack}`);
           return {
             ipoId: ipo.ipoId,
             companyName: ipo.companyName,
             success: false,
-            error: error.message,
+            error: error.message || 'Unknown error',
           };
         }
       })
     );
 
-    const data = results.map((result) =>
+      allResults.push(...batchResults);
+      
+      // Delay between batches (except for the last batch)
+      if (i + BATCH_SIZE < ipos.length) {
+        console.log(`   ⏳ Waiting ${DELAY_MS}ms before next batch...`);
+        await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+      }
+    }
+
+    const data = allResults.map((result) =>
       result.status === 'fulfilled' ? result.value : result.reason
     );
 
