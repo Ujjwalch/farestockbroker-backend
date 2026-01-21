@@ -119,7 +119,7 @@ async function syncAllIPOData() {
 async function fetchMainboardIPOs() {
   try {
     console.log('   Fetching Mainboard IPOs...');
-    const response = await axios.get('https://api.ipoapi.in/api/ipo/mainboard', {
+    const response = await axios.get('https://api.ipoapi.in/api/mainboard', {
       headers: {
         ApiKey: IPO_API_KEY,
         ApiSecret: IPO_API_SECRET
@@ -144,7 +144,7 @@ async function fetchMainboardIPOs() {
 async function fetchSMEIPOs() {
   try {
     console.log('   Fetching SME IPOs...');
-    const response = await axios.get('https://api.ipoapi.in/api/ipo/sme', {
+    const response = await axios.get('https://api.ipoapi.in/api/sme', {
       headers: {
         ApiKey: IPO_API_KEY,
         ApiSecret: IPO_API_SECRET
