@@ -11,6 +11,14 @@ const IPO_API_SECRET = process.env.IPO_API_SECRET;
 async function syncAllIPOData() {
   try {
     console.log('\n🔄 Starting IPO data sync...');
+    
+    // Check if API credentials are configured
+    if (!IPO_API_KEY || !IPO_API_SECRET) {
+      console.error('❌ IPO API credentials not configured');
+      console.error('   Please set IPO_API_KEY and IPO_API_SECRET environment variables');
+      return { success: false, error: 'API credentials not configured' };
+    }
+    
     const startTime = Date.now();
     
     // Fetch data from external API
@@ -109,40 +117,76 @@ async function syncAllIPOData() {
  * Fetch mainboard IPOs from external API
  */
 async function fetchMainboardIPOs() {
-  const response = await axios.get('https://api.ipoapi.in/api/ipo/mainboard', {
-    headers: {
-      ApiKey: IPO_API_KEY,
-      ApiSecret: IPO_API_SECRET
+  try {
+    console.log('   Fetching Mainboard IPOs...');
+    const response = await axios.get('https://api.ipoapi.in/api/ipo/mainboard', {
+      headers: {
+        ApiKey: IPO_API_KEY,
+        ApiSecret: IPO_API_SECRET
+      },
+      timeout: 30000
+    });
+    console.log(`   ✅ Mainboard: ${response.data.data?.length || 0} IPOs`);
+    return response.data.data || [];
+  } catch (error) {
+    console.error(`   ❌ Mainboard fetch failed: ${error.message}`);
+    if (error.response) {
+      console.error(`      Status: ${error.response.status}`);
+      console.error(`      URL: ${error.config?.url}`);
     }
-  });
-  return response.data.data || [];
+    throw error;
+  }
 }
 
 /**
  * Fetch SME IPOs from external API
  */
 async function fetchSMEIPOs() {
-  const response = await axios.get('https://api.ipoapi.in/api/ipo/sme', {
-    headers: {
-      ApiKey: IPO_API_KEY,
-      ApiSecret: IPO_API_SECRET
+  try {
+    console.log('   Fetching SME IPOs...');
+    const response = await axios.get('https://api.ipoapi.in/api/ipo/sme', {
+      headers: {
+        ApiKey: IPO_API_KEY,
+        ApiSecret: IPO_API_SECRET
+      },
+      timeout: 30000
+    });
+    console.log(`   ✅ SME: ${response.data.data?.length || 0} IPOs`);
+    return response.data.data || [];
+  } catch (error) {
+    console.error(`   ❌ SME fetch failed: ${error.message}`);
+    if (error.response) {
+      console.error(`      Status: ${error.response.status}`);
+      console.error(`      URL: ${error.config?.url}`);
     }
-  });
-  return response.data.data || [];
+    throw error;
+  }
 }
 
 /**
  * Fetch GMP list from external API
  */
 async function fetchGMPList() {
-  const response = await axios.get('https://api.ipoapi.in/api/gmp/list', {
-    params: { page: 1, limit: 1000 },
-    headers: {
-      ApiKey: IPO_API_KEY,
-      ApiSecret: IPO_API_SECRET
+  try {
+    console.log('   Fetching GMP List...');
+    const response = await axios.get('https://api.ipoapi.in/api/gmp/list', {
+      params: { page: 1, limit: 1000 },
+      headers: {
+        ApiKey: IPO_API_KEY,
+        ApiSecret: IPO_API_SECRET
+      },
+      timeout: 30000
+    });
+    console.log(`   ✅ GMP: ${response.data.data?.length || 0} entries`);
+    return response.data.data || [];
+  } catch (error) {
+    console.error(`   ❌ GMP fetch failed: ${error.message}`);
+    if (error.response) {
+      console.error(`      Status: ${error.response.status}`);
+      console.error(`      URL: ${error.config?.url}`);
     }
-  });
-  return response.data.data || [];
+    throw error;
+  }
 }
 
 /**
