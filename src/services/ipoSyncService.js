@@ -169,8 +169,8 @@ async function fetchSMEIPOs() {
 async function fetchGMPList() {
   try {
     console.log('   Fetching GMP List...');
-    const response = await axios.get('https://api.ipoapi.in/api/gmp/list', {
-      params: { page: 1, limit: 1000 },
+    const response = await axios.get('https://api.ipoapi.in/api/gmp-list', {
+      params: { pageNumber: 1, perPageRow: 1000 },
       headers: {
         ApiKey: IPO_API_KEY,
         ApiSecret: IPO_API_SECRET
