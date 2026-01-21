@@ -1,6 +1,7 @@
 const axios = require('axios');
 const http = require('http');
 const https = require('https');
+const ListingPrice = require('../models/ListingPrice');
 
 // Create HTTP agents with keep-alive
 const httpAgent = new http.Agent({
@@ -412,10 +413,11 @@ exports.getListingPrice = async (req, res) => {
 
 /**
  * Batch fetch listing prices for multiple IPOs using Yahoo Finance
+ * With database caching and periodic updates
  */
 exports.getBatchListingPrices = async (req, res) => {
   try {
-    const { ipos } = req.body; // Array of { companyName, ipoId, listingDate? }
+    const { ipos } = req.body; // Array of { companyName, ipoId, listingDate?, symbol?, isSME? }
 
     if (!Array.isArray(ipos) || ipos.length === 0) {
       return res.status(400).json({
@@ -426,146 +428,90 @@ exports.getBatchListingPrices = async (req, res) => {
 
     console.log(`\n📊 Batch listing price request for ${ipos.length} IPOs`);
 
-    // Process in smaller batches to avoid rate limiting
-    const BATCH_SIZE = 3; // Reduced from 5
-    const DELAY_MS = 2000; // Increased to 2 seconds
+    // Configuration for cache refresh
+    const CACHE_DURATION_MS = 1000 * 60 * 60 * 24; // 24 hours
+    const UPDATE_THRESHOLD_MS = 1000 * 60 * 60 * 4; // Update if older than 4 hours
     
     const allResults = [];
+    const iposToFetch = [];
     
-    for (let i = 0; i < ipos.length; i += BATCH_SIZE) {
-      const batch = ipos.slice(i, i + BATCH_SIZE);
-      console.log(`\n📦 Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(ipos.length / BATCH_SIZE)} (${batch.length} IPOs)`);
-      
-      const batchResults = await Promise.allSettled(
-        batch.map(async (ipo) => {
-        try {
-          // Check cache first
-          const cacheKey = `listing_${ipo.ipoId || ipo.companyName}`;
-          const cached = CACHE.get(cacheKey);
-          if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-            console.log(`✅ Cache hit: ${ipo.companyName}`);
-            return cached.data.data; // Return the data portion
-          }
-
-          // Get listing date
-          let finalListingDate = ipo.listingDate;
-          if (!finalListingDate && ipo.ipoId) {
-            try {
-              const ipoDetails = await getIPODetails(ipo.ipoId);
-              finalListingDate = ipoDetails?.listingDate;
-            } catch (err) {
-              console.warn(`⚠️  Could not fetch IPO details for ${ipo.companyName}:`, err.message);
+    // Step 1: Check database for existing listing prices
+    for (const ipo of ipos) {
+      try {
+        const cached = await ListingPrice.findOne({ ipoId: ipo.ipoId });
+        
+        if (cached) {
+          const age = Date.now() - new Date(cached.lastUpdated).getTime();
+          
+          // If data is fresh (< 24 hours), use it
+          if (age < CACHE_DURATION_MS) {
+            console.log(`✅ DB Cache hit: ${ipo.companyName} (age: ${Math.round(age / 1000 / 60)} min)`);
+            allResults.push({
+              ipoId: ipo.ipoId,
+              companyName: ipo.companyName,
+              ticker: cached.ticker,
+              listingPrice: cached.listingPrice,
+              lastPrice: cached.lastPrice,
+              success: true,
+              fromCache: true,
+            });
+            
+            // Schedule background update if data is getting old (> 4 hours)
+            if (age > UPDATE_THRESHOLD_MS) {
+              console.log(`   ⏰ Scheduling background update for ${ipo.companyName}`);
+              // Add to fetch queue but don't wait for it
+              setImmediate(() => updateListingPriceInBackground(ipo, cached));
             }
-          }
-
-          if (!finalListingDate) {
-            console.log(`❌ ${ipo.companyName}: No listing date available`);
-            return {
-              ipoId: ipo.ipoId,
-              companyName: ipo.companyName,
-              success: false,
-              error: 'Listing date not available',
-            };
-          }
-
-          // If symbol is provided, use it directly with appropriate suffix
-          let ticker = null;
-          if (ipo.symbol) {
-            // SME stocks are listed on BSE (.BO), Mainboard on NSE (.NS)
-            const suffix = ipo.isSME ? '.BO' : '.NS';
-            ticker = `${ipo.symbol}.${suffix === '.BO' ? 'BO' : 'NS'}`;
-            console.log(`   Using provided symbol: ${ticker} (${ipo.isSME ? 'BSE SME' : 'NSE'})`);
+            continue;
           } else {
-            // Search for ticker (will try multiple variations)
-            console.log(`   Searching for: "${ipo.companyName}"`);
-            ticker = await searchYahooTicker(ipo.companyName, ipo.symbol);
+            console.log(`⚠️  Stale cache for ${ipo.companyName} (age: ${Math.round(age / 1000 / 60 / 60)} hours)`);
           }
-
-          if (!ticker) {
-            console.log(`❌ ${ipo.companyName}: Ticker not found`);
-            return {
-              ipoId: ipo.ipoId,
-              companyName: ipo.companyName,
-              success: false,
-              error: 'Ticker not found',
-            };
-          }
-
-          console.log(`   Found ticker: ${ticker}`);
-
-          // Get open price for listing date from Yahoo Finance
-          let priceData = null;
-          try {
-            priceData = await getYahooOpenForDate(ticker, finalListingDate);
-          } catch (yahooError) {
-            console.log(`   Yahoo Finance failed, trying NSE fallback...`);
-            // Try NSE as fallback (will get current price, not historical)
-            const nseSymbol = ticker.replace('.NS', '').replace('.BO', '');
-            priceData = await getNSEPublicQuote(nseSymbol);
-          }
-
-          if (!priceData || priceData.open == null) {
-            console.log(`❌ ${ipo.companyName} (${ticker}): No price data for ${finalListingDate}`);
-            return {
-              ipoId: ipo.ipoId,
-              companyName: ipo.companyName,
-              ticker,
-              success: false,
-              error: 'Price data not available',
-            };
-          }
-
-          console.log(`✅ ${ipo.companyName} (${ticker}): ₹${priceData.open.toFixed(2)}`);
-
-          const result = {
-            ipoId: ipo.ipoId,
-            companyName: ipo.companyName,
-            ticker,
-            listingPrice: priceData.open,
-            lastPrice: priceData.close,
-            success: true,
-          };
-
-          // Cache the result
-          CACHE.set(cacheKey, {
-            data: { data: result },
-            timestamp: Date.now(),
-          });
-
-          return result;
-        } catch (error) {
-          console.error(`❌ ${ipo.companyName}: ${error.message}`);
-          console.error(`   Stack: ${error.stack}`);
-          return {
-            ipoId: ipo.ipoId,
-            companyName: ipo.companyName,
-            success: false,
-            error: error.message || 'Unknown error',
-          };
         }
-      })
-    );
+        
+        // No cache or stale cache - need to fetch
+        iposToFetch.push(ipo);
+        
+      } catch (dbErr) {
+        console.error(`DB error for ${ipo.companyName}:`, dbErr.message);
+        iposToFetch.push(ipo);
+      }
+    }
+    
+    console.log(`\n📡 Need to fetch ${iposToFetch.length} IPOs from Yahoo Finance`);
 
-      allResults.push(...batchResults);
+    // Step 2: Fetch missing/stale IPOs from Yahoo Finance
+    if (iposToFetch.length > 0) {
+      // Process in smaller batches to avoid rate limiting
+      const BATCH_SIZE = 3;
+      const DELAY_MS = 2000;
       
-      // Delay between batches (except for the last batch)
-      if (i + BATCH_SIZE < ipos.length) {
-        console.log(`   ⏳ Waiting ${DELAY_MS}ms before next batch...`);
-        await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+      for (let i = 0; i < iposToFetch.length; i += BATCH_SIZE) {
+        const batch = iposToFetch.slice(i, i + BATCH_SIZE);
+        console.log(`\n📦 Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(iposToFetch.length / BATCH_SIZE)} (${batch.length} IPOs)`);
+        
+        const batchResults = await Promise.allSettled(
+          batch.map(async (ipo) => {
+            return await fetchAndSaveListingPrice(ipo);
+          })
+        );
+
+        allResults.push(...batchResults.map(r => r.status === 'fulfilled' ? r.value : r.reason));
+        
+        // Delay between batches (except for the last batch)
+        if (i + BATCH_SIZE < iposToFetch.length) {
+          console.log(`   ⏳ Waiting ${DELAY_MS}ms before next batch...`);
+          await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+        }
       }
     }
 
-    const data = allResults.map((result) =>
-      result.status === 'fulfilled' ? result.value : result.reason
-    );
-
-    const successCount = data.filter(d => d.success).length;
+    const successCount = allResults.filter(d => d.success).length;
     console.log(`\n📊 Batch complete: ${successCount}/${ipos.length} successful\n`);
 
     return res.json({
       success: true,
       message: 'Batch listing prices fetched',
-      data,
+      data: allResults,
     });
   } catch (error) {
     console.error('❌ Batch listing prices error:', error.message);
@@ -575,6 +521,158 @@ exports.getBatchListingPrices = async (req, res) => {
     });
   }
 };
+
+/**
+ * Fetch listing price from Yahoo Finance and save to database
+ */
+async function fetchAndSaveListingPrice(ipo) {
+  try {
+    // Get listing date
+    let finalListingDate = ipo.listingDate;
+    if (!finalListingDate && ipo.ipoId) {
+      try {
+        const ipoDetails = await getIPODetails(ipo.ipoId);
+        finalListingDate = ipoDetails?.listingDate;
+      } catch (err) {
+        console.warn(`⚠️  Could not fetch IPO details for ${ipo.companyName}:`, err.message);
+      }
+    }
+
+    if (!finalListingDate) {
+      console.log(`❌ ${ipo.companyName}: No listing date available`);
+      return {
+        ipoId: ipo.ipoId,
+        companyName: ipo.companyName,
+        success: false,
+        error: 'Listing date not available',
+      };
+    }
+
+    // If symbol is provided, use it directly with appropriate suffix
+    let ticker = null;
+    if (ipo.symbol) {
+      // SME stocks are listed on BSE (.BO), Mainboard on NSE (.NS)
+      const suffix = ipo.isSME ? '.BO' : '.NS';
+      ticker = `${ipo.symbol}.${suffix === '.BO' ? 'BO' : 'NS'}`;
+      console.log(`   Using provided symbol: ${ticker} (${ipo.isSME ? 'BSE SME' : 'NSE'})`);
+    } else {
+      // Search for ticker (will try multiple variations)
+      console.log(`   Searching for: "${ipo.companyName}"`);
+      ticker = await searchYahooTicker(ipo.companyName, ipo.symbol);
+    }
+
+    if (!ticker) {
+      console.log(`❌ ${ipo.companyName}: Ticker not found`);
+      return {
+        ipoId: ipo.ipoId,
+        companyName: ipo.companyName,
+        success: false,
+        error: 'Ticker not found',
+      };
+    }
+
+    console.log(`   Found ticker: ${ticker}`);
+
+    // Get open price for listing date from Yahoo Finance
+    let priceData = null;
+    try {
+      priceData = await getYahooOpenForDate(ticker, finalListingDate);
+    } catch (yahooError) {
+      console.log(`   Yahoo Finance failed, trying NSE fallback...`);
+      // Try NSE as fallback (will get current price, not historical)
+      const nseSymbol = ticker.replace('.NS', '').replace('.BO', '');
+      priceData = await getNSEPublicQuote(nseSymbol);
+    }
+
+    if (!priceData || priceData.open == null) {
+      console.log(`❌ ${ipo.companyName} (${ticker}): No price data for ${finalListingDate}`);
+      return {
+        ipoId: ipo.ipoId,
+        companyName: ipo.companyName,
+        ticker,
+        success: false,
+        error: 'Price data not available',
+      };
+    }
+
+    console.log(`✅ ${ipo.companyName} (${ticker}): ₹${priceData.open.toFixed(2)}`);
+
+    // Save to database
+    const exchange = ticker.endsWith('.NS') ? 'NSE' : 'BSE';
+    const listingPriceDoc = {
+      ipoId: ipo.ipoId,
+      companyName: ipo.companyName,
+      symbol: ipo.symbol || ticker.split('.')[0],
+      ticker,
+      listingPrice: priceData.open,
+      lastPrice: priceData.close,
+      listingDate: finalListingDate,
+      isSME: ipo.isSME || false,
+      exchange,
+      lastFetched: new Date(),
+      lastUpdated: new Date(),
+      isVerified: true,
+      dataSource: 'Yahoo Finance',
+    };
+
+    try {
+      await ListingPrice.findOneAndUpdate(
+        { ipoId: ipo.ipoId },
+        { 
+          ...listingPriceDoc,
+          $inc: { fetchCount: 1 }
+        },
+        { upsert: true, new: true }
+      );
+      console.log(`   💾 Saved to database`);
+    } catch (dbErr) {
+      console.error(`   ⚠️  DB save failed: ${dbErr.message}`);
+    }
+
+    return {
+      ipoId: ipo.ipoId,
+      companyName: ipo.companyName,
+      ticker,
+      listingPrice: priceData.open,
+      lastPrice: priceData.close,
+      success: true,
+      fromCache: false,
+    };
+  } catch (error) {
+    console.error(`❌ ${ipo.companyName}: ${error.message}`);
+    return {
+      ipoId: ipo.ipoId,
+      companyName: ipo.companyName,
+      success: false,
+      error: error.message || 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Background update for stale listing prices
+ */
+async function updateListingPriceInBackground(ipo, cachedData) {
+  try {
+    console.log(`🔄 Background update: ${ipo.companyName}`);
+    
+    const priceData = await getYahooOpenForDate(cachedData.ticker, cachedData.listingDate);
+    
+    if (priceData && priceData.close != null) {
+      await ListingPrice.findOneAndUpdate(
+        { ipoId: ipo.ipoId },
+        { 
+          lastPrice: priceData.close,
+          lastUpdated: new Date(),
+          $inc: { fetchCount: 1 }
+        }
+      );
+      console.log(`   ✅ Updated ${ipo.companyName}: ₹${priceData.close.toFixed(2)}`);
+    }
+  } catch (error) {
+    console.error(`   ❌ Background update failed for ${ipo.companyName}:`, error.message);
+  }
+}
 
 /**
  * Helper: Get IPO details from ipoapi.in
