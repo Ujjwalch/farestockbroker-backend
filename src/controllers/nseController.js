@@ -1,4 +1,42 @@
 const axios = require('axios');
+const http = require('http');
+const https = require('https');
+
+// Create HTTP agents with keep-alive
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 50,
+  maxFreeSockets: 10,
+  timeout: 60000,
+});
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 50,
+  maxFreeSockets: 10,
+  timeout: 60000,
+});
+
+// Retry helper function
+async function retryRequest(requestFn, maxRetries = 3, delayMs = 1000) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await requestFn();
+    } catch (error) {
+      const isLastAttempt = attempt === maxRetries;
+      const isTimeout = error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED';
+      
+      if (isLastAttempt || !isTimeout) {
+        throw error;
+      }
+      
+      console.log(`   Retry ${attempt}/${maxRetries} after ${delayMs}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+    }
+  }
+}
 
 // In-memory cache
 const CACHE = new Map();
@@ -29,10 +67,47 @@ function stripCompanySuffix(name = '') {
 }
 
 /**
- * Yahoo Search: companyName -> best ticker
+ * Fallback: Try to get price from NSE public API (no auth needed)
+ */
+async function getNSEPublicQuote(symbol) {
+  try {
+    // NSE public quote API (doesn't require cookies)
+    const url = `https://www.nseindia.com/api/quote-equity?symbol=${symbol}`;
+    
+    const res = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Referer': 'https://www.nseindia.com/',
+      },
+      timeout: 30000,
+    });
+
+    const data = res.data;
+    const priceInfo = data?.priceInfo;
+    
+    if (priceInfo) {
+      return {
+        open: priceInfo.open,
+        close: priceInfo.close || priceInfo.lastPrice,
+        lastPrice: priceInfo.lastPrice,
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`   NSE Public API Error for ${symbol}:`, error.message);
+    return null;
+  }
+}
+
+/**
+ * Yahoo Search: companyName -> best ticker (with retry)
  */
 async function searchYahooTicker(query) {
-  try {
+  return retryRequest(async () => {
     const q = encodeURIComponent(query);
     const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${q}&quotesCount=6&newsCount=0`;
 
@@ -40,8 +115,13 @@ async function searchYahooTicker(query) {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
         'Accept': 'application/json,text/plain,*/*',
+        'Connection': 'keep-alive',
       },
-      timeout: 30000, // 30 second timeout
+      timeout: 60000,
+      httpAgent,
+      httpsAgent,
+      maxRedirects: 5,
+      validateStatus: (status) => status < 500,
     });
 
     const data = res.data;
@@ -52,22 +132,21 @@ async function searchYahooTicker(query) {
                    quotes.find((x) => x?.symbol?.endsWith('.BO'));
 
     return indian?.symbol || quotes?.[0]?.symbol || null;
-  } catch (error) {
+  }, 3, 1000).catch(error => {
     console.error(`   Yahoo Search Error for "${query}":`, {
       message: error.message,
       code: error.code,
       status: error.response?.status,
-      data: error.response?.data
     });
-    throw new Error(`Yahoo Search failed: ${error.message || error.code || 'Unknown error'}`);
-  }
+    throw new Error(`Yahoo Search failed after retries: ${error.message || error.code || 'Unknown error'}`);
+  });
 }
 
 /**
- * Yahoo Chart API - Get open price for listing date
+ * Yahoo Chart API - Get open price for listing date (with retry)
  */
 async function getYahooOpenForDate(symbol, listingDateStr) {
-  try {
+  return retryRequest(async () => {
     const listingDate = new Date(listingDateStr);
     if (isNaN(listingDate.getTime())) {
       throw new Error(`Invalid listing date: ${listingDateStr}`);
@@ -85,8 +164,13 @@ async function getYahooOpenForDate(symbol, listingDateStr) {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
         'Accept': 'application/json,text/plain,*/*',
+        'Connection': 'keep-alive',
       },
-      timeout: 30000, // 30 second timeout
+      timeout: 60000,
+      httpAgent,
+      httpsAgent,
+      maxRedirects: 5,
+      validateStatus: (status) => status < 500,
     });
 
     const json = res.data;
@@ -101,15 +185,14 @@ async function getYahooOpenForDate(symbol, listingDateStr) {
     }
 
     return { open, close };
-  } catch (error) {
+  }, 3, 1000).catch(error => {
     console.error(`   Yahoo Chart Error for ${symbol}:`, {
       message: error.message,
       code: error.code,
       status: error.response?.status,
-      data: error.response?.data
     });
-    throw new Error(`Yahoo Chart failed: ${error.message || error.code || 'Unknown error'}`);
-  }
+    throw new Error(`Yahoo Chart failed after retries: ${error.message || error.code || 'Unknown error'}`);
+  });
 }
 
 /**
@@ -127,8 +210,11 @@ exports.testYahooFinance = async (req, res) => {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json',
+        'Connection': 'keep-alive',
       },
-      timeout: 30000, // 30 seconds
+      timeout: 60000,
+      httpAgent,
+      httpsAgent,
     });
     
     console.log('   ✅ Search API works');
@@ -142,8 +228,11 @@ exports.testYahooFinance = async (req, res) => {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json',
+        'Connection': 'keep-alive',
       },
-      timeout: 30000, // 30 seconds
+      timeout: 60000,
+      httpAgent,
+      httpsAgent,
     });
     
     console.log('   ✅ Chart API works');
@@ -291,8 +380,8 @@ exports.getBatchListingPrices = async (req, res) => {
     console.log(`\n📊 Batch listing price request for ${ipos.length} IPOs`);
 
     // Process in smaller batches to avoid rate limiting
-    const BATCH_SIZE = 5;
-    const DELAY_MS = 1000; // 1 second delay between batches
+    const BATCH_SIZE = 3; // Reduced from 5
+    const DELAY_MS = 2000; // Increased to 2 seconds
     
     const allResults = [];
     
@@ -349,8 +438,16 @@ exports.getBatchListingPrices = async (req, res) => {
 
           console.log(`   Found ticker: ${ticker}`);
 
-          // Get open price for listing date
-          const priceData = await getYahooOpenForDate(ticker, finalListingDate);
+          // Get open price for listing date from Yahoo Finance
+          let priceData = null;
+          try {
+            priceData = await getYahooOpenForDate(ticker, finalListingDate);
+          } catch (yahooError) {
+            console.log(`   Yahoo Finance failed, trying NSE fallback...`);
+            // Try NSE as fallback (will get current price, not historical)
+            const nseSymbol = ticker.replace('.NS', '').replace('.BO', '');
+            priceData = await getNSEPublicQuote(nseSymbol);
+          }
 
           if (!priceData || priceData.open == null) {
             console.log(`❌ ${ipo.companyName} (${ticker}): No price data for ${finalListingDate}`);
