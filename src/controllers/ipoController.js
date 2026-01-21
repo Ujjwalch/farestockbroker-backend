@@ -28,7 +28,21 @@ const makeIPORequest = async (endpoint) => {
 // Get all mainboard IPOs
 exports.getMainboardIPOs = async (req, res) => {
   try {
-    const data = await makeIPORequest('/mainboard');
+    const { pageNumber, perPageRow, year, yearConsider } = req.query;
+    let endpoint = '/mainboard';
+    
+    // Build query parameters
+    const params = new URLSearchParams();
+    if (pageNumber) params.append('pageNumber', pageNumber);
+    if (perPageRow) params.append('perPageRow', perPageRow);
+    if (year) params.append('year', year);
+    if (yearConsider) params.append('yearConsider', yearConsider);
+    
+    if (params.toString()) {
+      endpoint += `?${params.toString()}`;
+    }
+    
+    const data = await makeIPORequest(endpoint);
     res.json({
       success: true,
       ...data
@@ -44,7 +58,21 @@ exports.getMainboardIPOs = async (req, res) => {
 // Get all SME IPOs
 exports.getSMEIPOs = async (req, res) => {
   try {
-    const data = await makeIPORequest('/sme');
+    const { pageNumber, perPageRow, year, yearConsider } = req.query;
+    let endpoint = '/sme';
+    
+    // Build query parameters
+    const params = new URLSearchParams();
+    if (pageNumber) params.append('pageNumber', pageNumber);
+    if (perPageRow) params.append('perPageRow', perPageRow);
+    if (year) params.append('year', year);
+    if (yearConsider) params.append('yearConsider', yearConsider);
+    
+    if (params.toString()) {
+      endpoint += `?${params.toString()}`;
+    }
+    
+    const data = await makeIPORequest(endpoint);
     res.json({
       success: true,
       ...data
@@ -61,7 +89,7 @@ exports.getSMEIPOs = async (req, res) => {
 exports.getIPODetails = async (req, res) => {
   try {
     const { id } = req.params;
-    const data = await makeIPORequest(`/ipo/${id}`);
+    const data = await makeIPORequest(`/detail/${id}`);
     res.json({
       success: true,
       ...data
@@ -77,16 +105,25 @@ exports.getIPODetails = async (req, res) => {
 // Get all IPOs (combined mainboard and SME)
 exports.getAllIPOs = async (req, res) => {
   try {
-    const { type } = req.query; // 'mainboard', 'sme', or 'all'
+    const { type, pageNumber, perPageRow, year, yearConsider } = req.query;
+    
+    // Build query parameters
+    const params = new URLSearchParams();
+    if (pageNumber) params.append('pageNumber', pageNumber);
+    if (perPageRow) params.append('perPageRow', perPageRow);
+    if (year) params.append('year', year);
+    if (yearConsider) params.append('yearConsider', yearConsider);
+    
+    const queryString = params.toString() ? `?${params.toString()}` : '';
     
     if (type === 'sme') {
-      const data = await makeIPORequest('/sme');
+      const data = await makeIPORequest(`/sme${queryString}`);
       return res.json({
         success: true,
         ...data
       });
     } else if (type === 'mainboard') {
-      const data = await makeIPORequest('/mainboard');
+      const data = await makeIPORequest(`/mainboard${queryString}`);
       return res.json({
         success: true,
         ...data
@@ -94,8 +131,8 @@ exports.getAllIPOs = async (req, res) => {
     } else {
       // Get both mainboard and SME
       const [mainboardData, smeData] = await Promise.all([
-        makeIPORequest('/mainboard'),
-        makeIPORequest('/sme')
+        makeIPORequest(`/mainboard${queryString}`),
+        makeIPORequest(`/sme${queryString}`)
       ]);
 
       const combinedData = [
@@ -108,6 +145,8 @@ exports.getAllIPOs = async (req, res) => {
         isSuccess: true,
         message: 'Successfully fetched all IPOs',
         totalRowCount: combinedData.length,
+        mainboardCount: mainboardData.totalRowCount || 0,
+        smeCount: smeData.totalRowCount || 0,
         data: combinedData
       });
     }
