@@ -11,6 +11,7 @@ const contentRoutes = require('./routes/contentRoutes');
 const leadRoutes = require('./routes/leadRoutes');
 const educationRoutes = require('./routes/educationRoutes');
 const ipoRoutes = require('./routes/ipoRoutes');
+const nseRoutes = require('./routes/nseRoutes');
 const connetDB = require('./config/database');
 const { startWorldIpoCron } = require('./jobs/worldIpoCron');
 
@@ -27,6 +28,7 @@ app.use('/api/content', contentRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/education', educationRoutes);
 app.use('/api/ipo', ipoRoutes);
+app.use('/api/nse', nseRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'FarestockBroker API is running' });
