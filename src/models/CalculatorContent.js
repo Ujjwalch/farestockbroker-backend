@@ -19,17 +19,32 @@ const calculatorContentSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  what: {
+  // Rich text HTML content
+  content: {
     type: String,
-    required: true
+    default: ''
   },
-  howToUse: {
+  // FAQs with rich text answers
+  faqs: [{
+    question: {
+      type: String,
+      required: true
+    },
+    answer: {
+      type: String, // Rich text HTML
+      required: true
+    }
+  }],
+  metaTitle: {
     type: String,
-    required: true
+    default: ''
   },
-  benefits: [{
+  metaDescription: {
     type: String,
-    required: true
+    default: ''
+  },
+  keywords: [{
+    type: String
   }],
   isActive: {
     type: Boolean,
