@@ -13,6 +13,7 @@ const educationRoutes = require('./routes/educationRoutes');
 const ipoRoutes = require('./routes/ipoRoutes');
 const ipoCacheRoutes = require('./routes/ipoCacheRoutes');
 const nseRoutes = require('./routes/nseRoutes');
+const calculatorContentRoutes = require('./routes/calculatorContentRoutes');
 const connetDB = require('./config/database');
 const { startWorldIpoCron } = require('./jobs/worldIpoCron');
 const { startIPOSyncCron } = require('./jobs/ipoSyncCron');
@@ -32,6 +33,7 @@ app.use('/api/education', educationRoutes);
 app.use('/api/ipo', ipoRoutes);
 app.use('/api/ipo-cache', ipoCacheRoutes); // Fast cached IPO data
 app.use('/api/nse', nseRoutes);
+app.use('/api/calculator-content', calculatorContentRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'FarestockBroker API is running' });
