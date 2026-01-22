@@ -33,6 +33,10 @@ exports.createCalculatorContent = async (req, res) => {
   try {
     const { calculatorId, name, description, content, faqs, metaTitle, metaDescription, keywords } = req.body;
     
+    // Log content size for debugging
+    const contentSize = content ? Buffer.byteLength(content, 'utf8') : 0;
+    console.log(`Creating calculator ${calculatorId}, content size: ${(contentSize / 1024).toFixed(2)} KB`);
+    
     // Check if content already exists
     const existingContent = await CalculatorContent.findOne({ calculatorId });
     if (existingContent) {
@@ -51,7 +55,13 @@ exports.createCalculatorContent = async (req, res) => {
     });
     
     await newContent.save();
-    res.status(201).json({ message: 'Calculator content created successfully', content: newContent });
+    
+    // Return minimal response to speed up transfer
+    res.status(201).json({ 
+      message: 'Calculator content created successfully', 
+      calculatorId: newContent.calculatorId,
+      name: newContent.name 
+    });
   } catch (error) {
     console.error('Error creating calculator content:', error);
     res.status(500).json({ message: 'Error creating calculator content', error: error.message });
@@ -63,6 +73,10 @@ exports.updateCalculatorContent = async (req, res) => {
   try {
     const { calculatorId } = req.params;
     const { name, description, content, faqs, metaTitle, metaDescription, keywords } = req.body;
+    
+    // Log content size for debugging
+    const contentSize = content ? Buffer.byteLength(content, 'utf8') : 0;
+    console.log(`Updating calculator ${calculatorId}, content size: ${(contentSize / 1024).toFixed(2)} KB`);
     
     const contentDoc = await CalculatorContent.findOne({ calculatorId });
     
@@ -79,8 +93,15 @@ exports.updateCalculatorContent = async (req, res) => {
     if (metaDescription) contentDoc.metaDescription = metaDescription;
     if (keywords !== undefined) contentDoc.keywords = keywords;
     
+    // Use lean save for better performance
     await contentDoc.save();
-    res.json({ message: 'Calculator content updated successfully', content: contentDoc });
+    
+    // Return minimal response to speed up transfer
+    res.json({ 
+      message: 'Calculator content updated successfully', 
+      calculatorId: contentDoc.calculatorId,
+      name: contentDoc.name 
+    });
   } catch (error) {
     console.error('Error updating calculator content:', error);
     res.status(500).json({ message: 'Error updating calculator content', error: error.message });
