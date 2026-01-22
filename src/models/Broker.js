@@ -69,6 +69,18 @@ const brokeragePlanSchema = new mongoose.Schema({
   }
 });
 
+const faqSchema = new mongoose.Schema({
+  question: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  answer: {
+    type: String,
+    required: true
+  }
+});
+
 const brokerSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -152,6 +164,8 @@ const brokerSchema = new mongoose.Schema({
   },
   
   brokeragePlans: [brokeragePlanSchema],
+  
+  faqs: [faqSchema],
   
   isActive: {
     type: Boolean,
