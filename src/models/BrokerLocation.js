@@ -1,89 +1,176 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
-const brokerLocationSchema = new mongoose.Schema({
-  brokerId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Broker',
-    required: true
-  },
-  brokerName: {
-    type: String,
-    required: true
-  },
-  branchName: {
-    type: String,
-    default: 'Main Branch'
-  },
-  address: {
-    type: String,
-    required: true
-  },
-  city: {
-    type: String,
-    required: true,
-    index: true
-  },
-  state: {
-    type: String,
-    required: true,
-    index: true
-  },
-  pincode: {
-    type: String,
-    required: true
-  },
-  phone: {
-    type: String,
-    default: ''
-  },
-  email: {
-    type: String,
-    default: ''
-  },
-  coordinates: {
-    latitude: {
-      type: Number,
-      required: false, // Optional - will be auto-geocoded
-      default: 0
+const brokerLocationSchema = new mongoose.Schema(
+  {
+    brokerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Broker",
+      required: true,
+      index: true,
     },
-    longitude: {
-      type: Number,
-      required: false, // Optional - will be auto-geocoded
-      default: 0
-    }
+
+    brokerName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    branchName: {
+      type: String,
+      default: "Main Branch",
+      trim: true,
+    },
+
+    address: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    city: {
+      type: String,
+      required: true,
+      trim: true,
+      index: true,
+    },
+
+    state: {
+      type: String,
+      required: true,
+      trim: true,
+      index: true,
+    },
+
+    pincode: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    phone: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    email: {
+      type: String,
+      default: "",
+      trim: true,
+      lowercase: true,
+    },
+
+    /**
+     * ✅ GeoJSON Point (BEST for Near-Me queries)
+     * Mongo expects: [longitude, latitude]
+     */
+    geo: {
+      type: {
+        type: String,
+        enum: ["Point"],
+        default: "Point",
+      },
+      coordinates: {
+        type: [Number], // [lng, lat]
+        default: [0, 0],
+      },
+    },
+
+    /**
+     * ✅ Keep your old structure too (optional)
+     * So your existing UI doesn't break.
+     */
+    coordinates: {
+      latitude: {
+        type: Number,
+        default: 0,
+      },
+      longitude: {
+        type: Number,
+        default: 0,
+      },
+    },
+
+    isHeadOffice: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    isActive: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
   },
-  isHeadOffice: {
-    type: Boolean,
-    default: false
-  },
-  isActive: {
-    type: Boolean,
-    default: true
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
+  {
+    timestamps: true, // ✅ automatically manages createdAt + updatedAt
   }
-});
+);
 
-// Index for geospatial queries
-brokerLocationSchema.index({ 'coordinates.latitude': 1, 'coordinates.longitude': 1 });
+/**
+ * ✅ 2dsphere index for $near / geoWithin
+ */
+brokerLocationSchema.index({ geo: "2dsphere" });
 
-// Compound index for city and state searches
+/**
+ * ✅ common filtering indexes
+ */
 brokerLocationSchema.index({ city: 1, state: 1 });
+brokerLocationSchema.index({ brokerId: 1, city: 1, state: 1 });
 
-brokerLocationSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
+/**
+ * ✅ Keep geo + coordinates always synced
+ */
+brokerLocationSchema.pre("save", function (next) {
+  const lat = Number(this.coordinates?.latitude || 0);
+  const lng = Number(this.coordinates?.longitude || 0);
+
+  // if UI stored in coordinates, reflect into geo
+  if (
+    typeof lat === "number" &&
+    typeof lng === "number" &&
+    !Number.isNaN(lat) &&
+    !Number.isNaN(lng)
+  ) {
+    this.geo = {
+      type: "Point",
+      coordinates: [lng, lat], // IMPORTANT: [lng, lat]
+    };
+  }
+
   next();
 });
 
-brokerLocationSchema.pre('findOneAndUpdate', function(next) {
-  this.set({ updatedAt: Date.now() });
+/**
+ * ✅ When updating by findOneAndUpdate, sync geo also
+ */
+brokerLocationSchema.pre("findOneAndUpdate", function (next) {
+  const update = this.getUpdate() || {};
+
+  const coords =
+    update.coordinates ||
+    update.$set?.coordinates ||
+    update.$set?.["coordinates"];
+
+  if (coords) {
+    const lat = Number(coords.latitude || 0);
+    const lng = Number(coords.longitude || 0);
+
+    const geoPoint = {
+      type: "Point",
+      coordinates: [lng, lat],
+    };
+
+    if (update.$set) {
+      update.$set.geo = geoPoint;
+    } else {
+      update.geo = geoPoint;
+    }
+  }
+
+  this.setUpdate(update);
   next();
 });
 
-module.exports = mongoose.model('BrokerLocation', brokerLocationSchema);
+module.exports = mongoose.model("BrokerLocation", brokerLocationSchema);
