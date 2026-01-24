@@ -209,7 +209,7 @@ exports.createLocation = async (req, res) => {
   try {
     const locationData = req.body;
 
-    // ✅ Validate broker exists (optional but strong)
+    // ✅ Validate broker exists
     if (locationData?.brokerId) {
       const brokerExists = await Broker.exists({ _id: locationData.brokerId });
       if (!brokerExists) {
@@ -350,22 +350,46 @@ exports.deleteLocation = async (req, res) => {
 };
 
 /**
- * ✅ Bulk import locations (Admin)
- * Body: { locations: [...] }
- *
- * - Auto-geocode missing coordinates (1 req/sec delay)
- * - Inserts all valid docs, returns error list
+ * ✅ FIXED: Bulk import locations (Admin)
+ * - Optimized for performance
+ * - Better error handling
+ * - No frontend geocoding needed
  */
 exports.bulkImportLocations = async (req, res) => {
   try {
-    const { locations } = req.body;
+    let locations = req.body;
+
+    // ✅ Handle both formats
+    if (!Array.isArray(locations)) {
+      locations = req.body.locations || [];
+    }
 
     if (!Array.isArray(locations) || locations.length === 0) {
-      return res.status(400).json({ message: "Invalid locations data" });
+      return res.status(400).json({ 
+        message: "Invalid request: locations array required" 
+      });
     }
 
     console.log(`[BrokerLocation] Bulk importing ${locations.length} locations...`);
 
+    // ✅ Validate all broker IDs upfront
+    const uniqueBrokerIds = [...new Set(
+      locations.map(loc => loc.brokerId).filter(Boolean)
+    )];
+    
+    if (uniqueBrokerIds.length === 0) {
+      return res.status(400).json({ 
+        message: "No valid brokerId found in locations" 
+      });
+    }
+
+    const validBrokers = await Broker.find({ 
+      _id: { $in: uniqueBrokerIds } 
+    }).select('_id');
+    
+    const validBrokerIdSet = new Set(validBrokers.map(b => b._id.toString()));
+
+    // ✅ Process locations with better error handling
     const processedLocations = [];
     const errors = [];
 
@@ -373,76 +397,144 @@ exports.bulkImportLocations = async (req, res) => {
       const location = locations[i];
 
       try {
-        // ✅ must have brokerId
+        // Validate brokerId
         if (!location.brokerId) {
-          throw new Error("brokerId is required for each location");
+          throw new Error("brokerId is required");
         }
 
-        // Auto-geocode if coordinates not provided or invalid
-        if (
-          !location.coordinates ||
-          !isValidCoordinates(
-            location.coordinates.latitude,
-            location.coordinates.longitude
-          )
-        ) {
-          console.log(
-            `[BrokerLocation] Geocoding ${i + 1}/${locations.length}: ${location.city}, ${location.state}`
-          );
+        if (!validBrokerIdSet.has(location.brokerId.toString())) {
+          throw new Error(`Invalid brokerId: ${location.brokerId}`);
+        }
 
-          const coordinates = await geocodeAddress(
-            location.address,
-            location.city,
-            location.state,
-            location.pincode
-          );
+        // Build processed location
+        const processed = {
+          brokerId: location.brokerId,
+          brokerName: location.brokerName || "",
+          branchName: location.branchName || "Main Branch",
+          address: location.address || "",
+          city: location.city || "",
+          state: location.state || "",
+          pincode: location.pincode || "000000",
+          phone: location.phone || "",
+          email: location.email || "",
+          coordinates: {
+            latitude: 0,
+            longitude: 0,
+          },
+          isHeadOffice: Boolean(location.isHeadOffice),
+          isActive: true,
+        };
 
-          location.coordinates = coordinates;
+        // ✅ Check if valid coordinates provided
+        const lat = Number(location.coordinates?.latitude);
+        const lng = Number(location.coordinates?.longitude);
 
-          // ✅ Delay 1 sec
-          if (i < locations.length - 1) {
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (isValidCoordinates(lat, lng)) {
+          // Use provided coordinates
+          processed.coordinates = { latitude: lat, longitude: lng };
+          processedLocations.push(processed);
+        } else {
+          // ✅ Try geocoding with timeout
+          try {
+            console.log(
+              `[BrokerLocation] Geocoding ${i + 1}/${locations.length}: ${processed.city}, ${processed.state}`
+            );
+            
+            const coordinates = await Promise.race([
+              geocodeAddress(
+                processed.address,
+                processed.city,
+                processed.state,
+                processed.pincode
+              ),
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error("Geocoding timeout")), 5000)
+              )
+            ]);
+
+            processed.coordinates = coordinates;
+            processedLocations.push(processed);
+
+            // ✅ Small delay to avoid rate limiting (only if geocoding)
+            if (i < locations.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          } catch (geocodeError) {
+            console.warn(
+              `[BrokerLocation] Geocoding failed for ${processed.city}: ${geocodeError.message}`
+            );
+            // ✅ Still add location with default 0,0 coordinates
+            processedLocations.push(processed);
           }
         }
 
-        // ✅ Make sure pincode never empty
-        if (!location.pincode) location.pincode = "000000";
-
-        processedLocations.push(location);
       } catch (error) {
         console.error(
           `[BrokerLocation] Error processing location ${i + 1}:`,
           error.message
         );
-
         errors.push({
           index: i,
-          location: location?.branchName || location?.address || "Unknown",
+          location: location?.branchName || location?.city || "Unknown",
           error: error.message,
         });
       }
     }
 
-    const result = await BrokerLocation.insertMany(processedLocations, {
-      ordered: false,
-    });
+    // ✅ Insert all valid locations
+    let insertedCount = 0;
+    if (processedLocations.length > 0) {
+      try {
+        const result = await BrokerLocation.insertMany(processedLocations, {
+          ordered: false, // Continue on error
+        });
+        insertedCount = result.length;
+        console.log(`[BrokerLocation] Successfully inserted ${insertedCount} locations`);
+      } catch (insertError) {
+        console.error("[BrokerLocation] Insert error:", insertError.message);
+        
+        // ✅ Handle partial success
+        if (insertError.writeErrors) {
+          insertedCount = insertError.insertedDocs?.length || 0;
+          insertError.writeErrors.forEach(err => {
+            errors.push({
+              index: err.index,
+              location: processedLocations[err.index]?.branchName || "Unknown",
+              error: err.errmsg || "Database insert error",
+            });
+          });
+        } else if (insertError.code === 11000) {
+          return res.status(400).json({
+            message: "Duplicate locations detected",
+            error: insertError.message,
+          });
+        } else {
+          throw insertError;
+        }
+      }
+    }
 
+    // ✅ Build response
     const response = {
-      message: "Bulk import completed",
-      imported: result.length,
+      message: `Imported ${insertedCount} of ${locations.length} locations`,
+      imported: insertedCount,
       total: locations.length,
-      success: result.length === locations.length,
+      failed: errors.length,
+      success: errors.length === 0,
     };
 
     if (errors.length > 0) {
       response.errors = errors;
-      response.message = `Imported ${result.length} of ${locations.length}. ${errors.length} failed.`;
     }
 
-    res.status(201).json(response);
+    const statusCode = insertedCount > 0 ? 201 : 400;
+    res.status(statusCode).json(response);
+
   } catch (error) {
-    res
-      .status(400)
-      .json({ message: "Error importing locations", error: error.message });
+    console.error("[BrokerLocation] Bulk import error:", error);
+    res.status(500).json({ 
+      message: "Error importing locations", 
+      error: error.message 
+    });
   }
 };
