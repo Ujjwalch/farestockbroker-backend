@@ -388,6 +388,11 @@ const createBlog = async (req, res) => {
             metaKeywords: metaKeywords || []
         };
 
+        // Auto-truncate metaDescription if it exceeds 160 characters (SEO limit)
+        if (blogData.metaDescription && blogData.metaDescription.length > 160) {
+            blogData.metaDescription = blogData.metaDescription.substring(0, 157) + '...';
+        }
+
         // Set scheduled date if provided
         if (status === 'scheduled' && scheduledDate) {
             blogData.scheduledDate = new Date(scheduledDate);
@@ -445,6 +450,11 @@ const updateBlog = async (req, res) => {
             }
 
             updateData.slug = sanitizedSlug;
+        }
+
+        // Auto-truncate metaDescription if it exceeds 160 characters
+        if (updateData.metaDescription && updateData.metaDescription.length > 160) {
+            updateData.metaDescription = updateData.metaDescription.substring(0, 157) + '...';
         }
 
         // Update blog
