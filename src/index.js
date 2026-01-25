@@ -16,6 +16,7 @@ const nseRoutes = require('./routes/nseRoutes');
 const calculatorContentRoutes = require('./routes/calculatorContentRoutes');
 const brokerLocationRoutes = require('./routes/brokerLocation');
 const blogRoutes = require('./routes/blogRoutes');
+const newsRoutes = require('./routes/newsRoutes');
 const connetDB = require('./config/database');
 const { startWorldIpoCron } = require('./jobs/worldIpoCron');
 const { startIPOSyncCron } = require('./jobs/ipoSyncCron');
@@ -38,6 +39,7 @@ app.use('/api/nse', nseRoutes);
 app.use('/api/calculator-content', calculatorContentRoutes);
 app.use('/api/broker-locations', brokerLocationRoutes);
 app.use('/api/blogs', blogRoutes);
+app.use('/api/news', newsRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'FarestockBroker API is running' });
