@@ -136,6 +136,11 @@ blogSchema.pre('save', function (next) {
         this.metaDescription = this.excerpt.substring(0, 160);
     }
 
+    // Auto-truncate metaDescription if it exceeds 160 characters
+    if (this.metaDescription && this.metaDescription.length > 160) {
+        this.metaDescription = this.metaDescription.substring(0, 157) + '...';
+    }
+
     next();
 });
 
