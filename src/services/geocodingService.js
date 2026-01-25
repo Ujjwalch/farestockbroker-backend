@@ -96,7 +96,8 @@ async function fetchWithRetry(url, options = {}, retries = 2) {
 async function geocodeNominatim(query) {
   await rateLimit();
 
-  const url = `${NOMINATIM_BASE}?format=json&q=${encodeURIComponent(query)}&limit=1`;
+  // ✅ FIXED: Added countrycodes=in to restrict searches to India only
+  const url = `${NOMINATIM_BASE}?format=json&q=${encodeURIComponent(query)}&limit=1&countrycodes=in&addressdetails=1&accept-language=en`;
 
   // ✅ Nominatim needs proper headers (sometimes blocks)
   const res = await fetchWithRetry(
