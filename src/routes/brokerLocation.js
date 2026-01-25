@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const brokerLocationController = require('../controllers/brokerLocationController');
-const { verifyToken } = require('../middlewares/auth');
+const { authenticateAdmin } = require('../middlewares/auth');
 
 // Public routes
 router.get('/cities', brokerLocationController.getCities);
@@ -11,9 +11,9 @@ router.get('/broker/:brokerId', brokerLocationController.getLocationsByBroker);
 router.get('/', brokerLocationController.getAllLocations);
 
 // Admin routes (protected)
-router.post('/', verifyToken, brokerLocationController.createLocation);
-router.put('/:id', verifyToken, brokerLocationController.updateLocation);
-router.delete('/:id', verifyToken, brokerLocationController.deleteLocation);
-router.post('/bulk-import', verifyToken, brokerLocationController.bulkImportLocations);
+router.post('/', authenticateAdmin, brokerLocationController.createLocation);
+router.put('/:id', authenticateAdmin, brokerLocationController.updateLocation);
+router.delete('/:id', authenticateAdmin, brokerLocationController.deleteLocation);
+router.post('/bulk-import', authenticateAdmin, brokerLocationController.bulkImportLocations);
 
 module.exports = router;

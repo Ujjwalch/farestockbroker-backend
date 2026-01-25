@@ -1,11 +1,9 @@
 const BrokerLocation = require('../models/BrokerLocation');
-const Broker = require('../models/Broker');
-const { geocodeAddress, isValidCoordinates } = require('../services/geocodingService');
 
 // Get all unique cities
 exports.getCities = async (req, res) => {
   try {
-    const cities = await BrokerLocation.distinct('city');
+    const cities = await BrokerLocation.distinct('city', { isActive: true });
     res.json(cities.sort());
   } catch (error) {
     res.status(500).json({ message: 'Error fetching cities', error: error.message });
@@ -15,7 +13,7 @@ exports.getCities = async (req, res) => {
 // Get all unique states
 exports.getStates = async (req, res) => {
   try {
-    const states = await BrokerLocation.distinct('state');
+    const states = await BrokerLocation.distinct('state', { isActive: true });
     res.json(states.sort());
   } catch (error) {
     res.status(500).json({ message: 'Error fetching states', error: error.message });
@@ -71,7 +69,7 @@ exports.getLocationsByBroker = async (req, res) => {
 exports.getAllLocations = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
+    const limit = parseInt(req.query.limit) || 100;
     const skip = (page - 1) * limit;
     
     const locations = await BrokerLocation.find({ isActive: true })
@@ -96,31 +94,11 @@ exports.getAllLocations = async (req, res) => {
   }
 };
 
-// Create new location (Admin) - INSTANT UPLOAD
+// Create new location (Admin)
 exports.createLocation = async (req, res) => {
   try {
-    const locationData = req.body;
-    
-    // If coordinates not provided or invalid, use default (0, 0)
-    // Geocoding will be done in background
-    if (!locationData.coordinates || 
-        !isValidCoordinates(locationData.coordinates.latitude, locationData.coordinates.longitude)) {
-      
-      console.log('[BrokerLocation] No valid coordinates, using default (0, 0)');
-      locationData.coordinates = {
-        latitude: 0,
-        longitude: 0
-      };
-    }
-    
-    // Save location immediately
-    const location = new BrokerLocation(locationData);
+    const location = new BrokerLocation(req.body);
     await location.save();
-    
-    // Geocode in background (non-blocking) if coordinates are default
-    if (locationData.coordinates.latitude === 0 && locationData.coordinates.longitude === 0) {
-      geocodeInBackground(location._id, locationData.address, locationData.city, locationData.state, locationData.pincode);
-    }
     
     res.status(201).json({
       message: 'Location created successfully',
@@ -131,66 +109,19 @@ exports.createLocation = async (req, res) => {
   }
 };
 
-// Background geocoding (non-blocking)
-async function geocodeInBackground(locationId, address, city, state, pincode) {
-  try {
-    console.log(`[BrokerLocation] Background geocoding for ${locationId}...`);
-    
-    const coordinates = await geocodeAddress(address, city, state, pincode);
-    
-    await BrokerLocation.findByIdAndUpdate(locationId, {
-      coordinates: coordinates
-    });
-    
-    console.log(`[BrokerLocation] ✓ Geocoded ${locationId}:`, coordinates);
-  } catch (error) {
-    console.error(`[BrokerLocation] Background geocoding failed for ${locationId}:`, error.message);
-    // Don't throw - just log the error
-  }
-}
-
 // Update location (Admin)
 exports.updateLocation = async (req, res) => {
   try {
     const { id } = req.params;
-    const locationData = req.body;
-    
-    // Auto-geocode if address changed and coordinates not provided
-    if (locationData.address || locationData.city || locationData.state || locationData.pincode) {
-      // Get existing location to check if address changed
-      const existingLocation = await BrokerLocation.findById(id);
-      
-      if (existingLocation) {
-        const addressChanged = 
-          locationData.address !== existingLocation.address ||
-          locationData.city !== existingLocation.city ||
-          locationData.state !== existingLocation.state ||
-          locationData.pincode !== existingLocation.pincode;
-        
-        // If address changed and no new coordinates provided, geocode in background
-        if (addressChanged && 
-            (!locationData.coordinates || 
-             !isValidCoordinates(locationData.coordinates.latitude, locationData.coordinates.longitude))) {
-          
-          console.log('[BrokerLocation] Address changed, will geocode in background...');
-          locationData.coordinates = { latitude: 0, longitude: 0 };
-        }
-      }
-    }
     
     const location = await BrokerLocation.findByIdAndUpdate(
       id,
-      locationData,
+      req.body,
       { new: true, runValidators: true }
     );
     
     if (!location) {
       return res.status(404).json({ message: 'Location not found' });
-    }
-    
-    // Geocode in background if coordinates are default
-    if (location.coordinates.latitude === 0 && location.coordinates.longitude === 0) {
-      geocodeInBackground(location._id, location.address, location.city, location.state, location.pincode);
     }
     
     res.json({
@@ -202,10 +133,11 @@ exports.updateLocation = async (req, res) => {
   }
 };
 
-// Delete location (Admin)
+// Delete location (Admin - soft delete)
 exports.deleteLocation = async (req, res) => {
   try {
     const { id } = req.params;
+    
     const location = await BrokerLocation.findByIdAndUpdate(
       id,
       { isActive: false },
@@ -222,7 +154,7 @@ exports.deleteLocation = async (req, res) => {
   }
 };
 
-// Bulk import locations (Admin) - INSTANT UPLOAD
+// Bulk import locations (Admin)
 exports.bulkImportLocations = async (req, res) => {
   try {
     const { locations } = req.body;
@@ -233,75 +165,29 @@ exports.bulkImportLocations = async (req, res) => {
     
     console.log(`[BrokerLocation] Bulk importing ${locations.length} locations...`);
     
-    // Process locations - set default coordinates if not provided
-    const processedLocations = locations.map(location => {
-      if (!location.coordinates || 
-          !isValidCoordinates(location.coordinates.latitude, location.coordinates.longitude)) {
-        location.coordinates = {
-          latitude: 0,
-          longitude: 0
-        };
-      }
-      return location;
-    });
-    
-    // Insert all locations immediately
-    const result = await BrokerLocation.insertMany(processedLocations, { ordered: false });
+    // Insert all locations
+    const result = await BrokerLocation.insertMany(locations, { ordered: false });
     
     console.log(`[BrokerLocation] ✓ Inserted ${result.length} locations`);
-    
-    // Geocode in background (non-blocking)
-    const locationsToGeocode = result.filter(loc => 
-      loc.coordinates.latitude === 0 && loc.coordinates.longitude === 0
-    );
-    
-    if (locationsToGeocode.length > 0) {
-      console.log(`[BrokerLocation] Starting background geocoding for ${locationsToGeocode.length} locations...`);
-      bulkGeocodeInBackground(locationsToGeocode);
-    }
     
     res.status(201).json({
       message: 'Bulk import completed successfully',
       imported: result.length,
       total: locations.length,
-      success: true,
-      geocodingInProgress: locationsToGeocode.length
+      success: true
     });
   } catch (error) {
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      const inserted = error.insertedDocs?.length || 0;
+      return res.status(201).json({
+        message: `Imported ${inserted} locations, some duplicates skipped`,
+        imported: inserted,
+        total: req.body.locations?.length || 0,
+        success: true
+      });
+    }
+    
     res.status(400).json({ message: 'Error importing locations', error: error.message });
   }
 };
-
-// Background bulk geocoding (non-blocking)
-async function bulkGeocodeInBackground(locations) {
-  for (let i = 0; i < locations.length; i++) {
-    const location = locations[i];
-    
-    try {
-      console.log(`[BrokerLocation] Geocoding ${i + 1}/${locations.length}: ${location.city}`);
-      
-      const coordinates = await geocodeAddress(
-        location.address,
-        location.city,
-        location.state,
-        location.pincode
-      );
-      
-      await BrokerLocation.findByIdAndUpdate(location._id, {
-        coordinates: coordinates
-      });
-      
-      console.log(`[BrokerLocation] ✓ Geocoded ${location.city}`);
-      
-      // Respect rate limits (1 req/sec)
-      if (i < locations.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    } catch (error) {
-      console.error(`[BrokerLocation] Geocoding failed for ${location.city}:`, error.message);
-      // Continue with next location
-    }
-  }
-  
-  console.log(`[BrokerLocation] ✓ Background geocoding completed`);
-}
