@@ -15,6 +15,7 @@ const ipoCacheRoutes = require('./routes/ipoCacheRoutes');
 const nseRoutes = require('./routes/nseRoutes');
 const calculatorContentRoutes = require('./routes/calculatorContentRoutes');
 const brokerLocationRoutes = require('./routes/brokerLocation');
+const blogRoutes = require('./routes/blogRoutes');
 const connetDB = require('./config/database');
 const { startWorldIpoCron } = require('./jobs/worldIpoCron');
 const { startIPOSyncCron } = require('./jobs/ipoSyncCron');
@@ -36,6 +37,7 @@ app.use('/api/ipo-cache', ipoCacheRoutes); // Fast cached IPO data
 app.use('/api/nse', nseRoutes);
 app.use('/api/calculator-content', calculatorContentRoutes);
 app.use('/api/broker-locations', brokerLocationRoutes);
+app.use('/api/blogs', blogRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'FarestockBroker API is running' });
@@ -43,17 +45,17 @@ app.get('/api/health', (req, res) => {
 
 app.use((err, req, res, next) => {
   console.error('Global error handler:', err.stack);
-  res.status(500).json({ 
-    success: false, 
+  res.status(500).json({
+    success: false,
     message: err.message || 'Something went wrong!',
     error: err.message || 'Internal server error'
   });
 });
 
 app.use('*', (req, res) => {
-  res.status(404).json({ 
-    success: false, 
-    message: 'Route not found' 
+  res.status(404).json({
+    success: false,
+    message: 'Route not found'
   });
 });
 
