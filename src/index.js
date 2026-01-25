@@ -28,6 +28,9 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' })); // Increased for large rich text content
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Serve static files
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
 app.use('/api/brokers', brokerRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/content', contentRoutes);
