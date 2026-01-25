@@ -15,6 +15,10 @@ const brokerLocationSchema = new mongoose.Schema({
     required: true,
     default: 'Main Branch'
   },
+  branchPersonName: {
+    type: String,
+    default: ''
+  },
   address: {
     type: String,
     required: true
