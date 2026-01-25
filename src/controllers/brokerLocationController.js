@@ -1,376 +1,47 @@
 const BrokerLocation = require("../models/BrokerLocation");
-const fetch = require("node-fetch"); // ✅ npm i node-fetch@2
+const { geocodeAddress, isZeroCoords } = require("../services/geocodingService");
 
 /**
- * ================================
- * AUTO NORMALIZE + AUTO GEOCODE
- * ================================
- * Free geocoding via OpenStreetMap Nominatim
- * - Address-first (unique pins)
- * - Fallback to city-level
- * - Auto-correct typos and wrong state mappings
+ * Background geocode runner (fire & forget)
+ * This makes sure admin API returns instantly.
  */
-
-// ✅ Nominatim settings
-const NOMINATIM_BASE = "https://nominatim.openstreetmap.org/search";
-const NOMINATIM_DELAY_MS = 1200; // safe-ish for production load
-const NOMINATIM_TIMEOUT_MS = 8000;
-const NOMINATIM_RETRIES = 2;
-
-// 🔥 IMPORTANT: Put your contact email here to reduce blocking chances
-const NOMINATIM_USER_AGENT =
-  "FareStockBrokerGeocoder/1.0 (contact: support@farestock.com)";
-
-let _lastNominatimHit = 0;
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function throttleNominatim() {
-  const now = Date.now();
-  const gap = now - _lastNominatimHit;
-  if (gap < NOMINATIM_DELAY_MS) {
-    await sleep(NOMINATIM_DELAY_MS - gap);
-  }
-  _lastNominatimHit = Date.now();
-}
-
-function cleanText(v) {
-  if (v === null || v === undefined) return "";
-  return String(v).trim();
-}
-
-function titleCase(str) {
-  const s = cleanText(str);
-  if (!s) return s;
-  return s
-    .toLowerCase()
-    .split(" ")
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
-/**
- * Common typo correction maps
- */
-const STATE_FIX_MAP = {
-  chattisghad: "Chhattisgarh",
-  chattisgarh: "Chhattisgarh",
-  karanataka: "Karnataka",
-  maharastra: "Maharashtra",
-  tamilnadu: "Tamil Nadu",
-  uttarpradesh: "Uttar Pradesh",
-  madhyapradesh: "Madhya Pradesh",
-  andhrapradesh: "Andhra Pradesh",
-  westbengal: "West Bengal",
-  westbengaal: "West Bengal",
-  westbangal: "West Bengal",
-  westbangla: "West Bengal",
-  odissa: "Odisha",
-  orissa: "Odisha",
-  rajastan: "Rajasthan",
-  uttrakhand: "Uttarakhand",
-  pondicherry: "Puducherry",
-};
-
-const CITY_FIX_MAP = {
-  ahmedhabad: "Ahmedabad",
-  ahemdabad: "Ahmedabad",
-  bangalore: "Bengaluru",
-  bengaluru: "Bengaluru",
-  belgavi: "Belagavi",
-  calicut: "Kozhikode",
-  bombay: "Mumbai",
-};
-
-/**
- * City -> Correct State mapping (high impact)
- * You can keep expanding this safely.
- */
-const CITY_TO_STATE = {
-  // Gujarat
-  ahmedabad: "Gujarat",
-  surat: "Gujarat",
-  vadodara: "Gujarat",
-  baroda: "Gujarat",
-  rajkot: "Gujarat",
-  jamnagar: "Gujarat",
-  gandhinagar: "Gujarat",
-  bhavnagar: "Gujarat",
-
-  // Karnataka
-  bengaluru: "Karnataka",
-  bangalore: "Karnataka",
-  belagavi: "Karnataka",
-  mysuru: "Karnataka",
-  mangaluru: "Karnataka",
-
-  // Maharashtra
-  mumbai: "Maharashtra",
-  pune: "Maharashtra",
-  nagpur: "Maharashtra",
-  nashik: "Maharashtra",
-  aurangabad: "Maharashtra",
-  ahmednagar: "Maharashtra",
-
-  // MP
-  bhopal: "Madhya Pradesh",
-  indore: "Madhya Pradesh",
-  jabalpur: "Madhya Pradesh",
-
-  // TN
-  chennai: "Tamil Nadu",
-  coimbatore: "Tamil Nadu",
-  madurai: "Tamil Nadu",
-
-  // Delhi
-  "new delhi": "Delhi",
-  delhi: "Delhi",
-
-  // WB
-  kolkata: "West Bengal",
-
-  // Odisha
-  bhubaneswar: "Odisha",
-  cuttack: "Odisha",
-
-  // Kerala
-  kochi: "Kerala",
-  ernakulam: "Kerala",
-  trivandrum: "Kerala",
-  thiruvananthapuram: "Kerala",
-  kozhikode: "Kerala",
-};
-
-function normalizeState(state) {
-  const s = cleanText(state);
-  if (!s) return s;
-
-  const key = s.toLowerCase().replace(/\s+/g, "");
-  const fixed = STATE_FIX_MAP[key];
-  return fixed ? fixed : titleCase(s);
-}
-
-function normalizeCity(city) {
-  const c = cleanText(city);
-  if (!c) return c;
-
-  const key = c.toLowerCase().replace(/\s+/g, "");
-  const fixed = CITY_FIX_MAP[key];
-  return fixed ? fixed : titleCase(c);
-}
-
-/**
- * If city exists and we know it's state, override wrong state
- */
-function inferStateFromCity(city) {
-  const c = cleanText(city).toLowerCase();
-  return CITY_TO_STATE[c] || null;
-}
-
-/**
- * Coordinates validator
- */
-function isValidCoords(coords) {
-  if (!coords) return false;
-  const lat = Number(coords.latitude);
-  const lng = Number(coords.longitude);
-  return (
-    Number.isFinite(lat) &&
-    Number.isFinite(lng) &&
-    Math.abs(lat) <= 90 &&
-    Math.abs(lng) <= 180
-  );
-}
-
-/**
- * Build query candidates:
- * STRICT address-first to ensure unique pins if possible.
- */
-function buildQueryCandidates(location) {
-  const address = cleanText(location.address);
-  const city = cleanText(location.city);
-  const state = cleanText(location.state);
-  const pincode = cleanText(location.pincode);
-
-  const candidates = [];
-
-  // ✅ If address exists: try strong combos first
-  if (address) {
-    if (address && city && state && pincode)
-      candidates.push(`${address}, ${city}, ${state}, ${pincode}, India`);
-    if (address && city && state) candidates.push(`${address}, ${city}, ${state}, India`);
-    if (address && city && pincode) candidates.push(`${address}, ${city}, ${pincode}, India`);
-    if (address && city) candidates.push(`${address}, ${city}, India`);
-
-    // last resort with address only
-    candidates.push(`${address}, India`);
-
-    // fallback to city/state ONLY AFTER address attempts
-    if (city && state) candidates.push(`${city}, ${state}, India`);
-    if (city) candidates.push(`${city}, India`);
-
-    return candidates;
-  }
-
-  // ✅ If no address: city-level
-  if (city && state) candidates.push(`${city}, ${state}, India`);
-  if (city) candidates.push(`${city}, India`);
-
-  return candidates;
-}
-
-/**
- * Fetch with timeout
- */
-async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
+async function geocodeAndUpdateLocation(locationId) {
   try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    return res;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
+    const loc = await BrokerLocation.findById(locationId);
+    if (!loc) return;
 
-/**
- * Nominatim search single query
- */
-async function nominatimSearch(query) {
-  const url =
-    `${NOMINATIM_BASE}?format=json` +
-    `&q=${encodeURIComponent(query)}` +
-    `&limit=1` +
-    `&countrycodes=in` +
-    `&addressdetails=1` +
-    `&accept-language=en`;
+    // Only geocode if missing
+    if (!isZeroCoords(loc.coordinates)) return;
 
-  await throttleNominatim();
+    const coords = await geocodeAddress({
+      address: loc.address,
+      city: loc.city,
+      state: loc.state,
+      pincode: loc.pincode,
+    });
 
-  const res = await fetchWithTimeout(
-    url,
-    {
-      headers: {
-        "User-Agent": NOMINATIM_USER_AGENT,
-        Accept: "application/json",
+    if (!coords) return;
+
+    await BrokerLocation.findByIdAndUpdate(
+      locationId,
+      {
+        coordinates: {
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+        },
       },
-    },
-    NOMINATIM_TIMEOUT_MS
-  );
-
-  const rawText = await res.text().catch(() => "");
-
-  if (!res.ok) {
-    return { ok: false, status: res.status, rawText, data: null };
-  }
-
-  try {
-    const data = JSON.parse(rawText);
-    return { ok: true, status: res.status, rawText, data };
-  } catch {
-    return { ok: false, status: res.status, rawText, data: null };
+      { new: true }
+    );
+  } catch (err) {
+    // silent fail so API never breaks for admin
+    console.log("[Geocode Background Error]", err?.message || err);
   }
 }
 
-/**
- * Main geocode method with retries + fallbacks
- */
-async function geocodeLocation(location) {
-  const candidates = buildQueryCandidates(location);
-  if (!candidates.length) return null;
-
-  for (const query of candidates) {
-    for (let attempt = 0; attempt <= NOMINATIM_RETRIES; attempt++) {
-      const result = await nominatimSearch(query);
-
-      if (!result.ok) {
-        // basic backoff for rate-limit/block
-        if (result.status === 429) {
-          await sleep(5000);
-        } else if (result.status === 403) {
-          await sleep(7000);
-        } else {
-          await sleep(1200);
-        }
-
-        if (attempt < NOMINATIM_RETRIES) continue;
-        break;
-      }
-
-      if (Array.isArray(result.data) && result.data.length > 0) {
-        const lat = parseFloat(result.data[0].lat);
-        const lon = parseFloat(result.data[0].lon);
-
-        if (Number.isFinite(lat) && Number.isFinite(lon)) {
-          // Decide accuracy level
-          const isCityFallback =
-            query.endsWith(", India") &&
-            !query.includes(cleanText(location.address));
-
-          return {
-            coordinates: { latitude: lat, longitude: lon },
-            geocodeLevel: isCityFallback ? "city" : "exact",
-            queryUsed: query,
-          };
-        }
-      }
-
-      if (attempt < NOMINATIM_RETRIES) await sleep(1200);
-    }
-  }
-
-  return null;
+function startGeocodeJob(locationId) {
+  // run after response is sent (non-blocking)
+  setImmediate(() => geocodeAndUpdateLocation(locationId));
 }
-
-/**
- * Normalize + fix fields + optionally geocode if needed
- */
-async function normalizeAndGeocodePayload(payload) {
-  const updated = { ...payload };
-
-  // normalize city/state
-  if (updated.city) updated.city = normalizeCity(updated.city);
-  if (updated.state) updated.state = normalizeState(updated.state);
-
-  // infer correct state from known city list
-  const inferredState = inferStateFromCity(updated.city);
-  if (inferredState) {
-    updated.state = inferredState;
-  }
-
-  // If coordinates missing or 0, geocode it
-  const coords = updated.coordinates || {};
-  const lat = Number(coords.latitude);
-  const lng = Number(coords.longitude);
-
-  const needsGeocode =
-    !Number.isFinite(lat) ||
-    !Number.isFinite(lng) ||
-    lat === 0 ||
-    lng === 0 ||
-    !updated.coordinates;
-
-  if (needsGeocode) {
-    const geo = await geocodeLocation(updated);
-    if (geo && isValidCoords(geo.coordinates)) {
-      updated.coordinates = geo.coordinates;
-
-      // Optional fields (only if your schema supports them)
-      updated.geocodeLevel = geo.geocodeLevel;
-      updated.geocodeQuery = geo.queryUsed;
-      updated.geocodedAt = new Date();
-    }
-  }
-
-  return updated;
-}
-
-/**
- * ================================
- * CONTROLLER METHODS
- * ================================
- */
 
 // Get all unique cities
 exports.getCities = async (req, res) => {
@@ -458,16 +129,17 @@ exports.getAllLocations = async (req, res) => {
   }
 };
 
-// ✅ Create new location (Admin) - auto-correct + auto-geocode
+// ✅ Create new location (Admin) - instant response + background geocode
 exports.createLocation = async (req, res) => {
   try {
-    const fixedPayload = await normalizeAndGeocodePayload(req.body);
-
-    const location = new BrokerLocation(fixedPayload);
+    const location = new BrokerLocation(req.body);
     await location.save();
 
+    // ✅ fire & forget geocoding
+    startGeocodeJob(location._id);
+
     res.status(201).json({
-      message: "Location created successfully",
+      message: "Location created successfully (geocoding will update soon)",
       location,
     });
   } catch (error) {
@@ -475,25 +147,46 @@ exports.createLocation = async (req, res) => {
   }
 };
 
-// ✅ Update location (Admin) - auto-correct + auto-geocode
+// ✅ Update location (Admin)
+// ✅ Auto re-geocode when address/city/state/pincode changes
 exports.updateLocation = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const fixedPayload = await normalizeAndGeocodePayload(req.body);
+    // Fetch old location first
+    const oldLocation = await BrokerLocation.findById(id);
+    if (!oldLocation) {
+      return res.status(404).json({ message: "Location not found" });
+    }
 
-    const location = await BrokerLocation.findByIdAndUpdate(id, fixedPayload, {
+    // Check if address fields changed
+    const addressChanged =
+      (req.body.address !== undefined && req.body.address !== oldLocation.address) ||
+      (req.body.city !== undefined && req.body.city !== oldLocation.city) ||
+      (req.body.state !== undefined && req.body.state !== oldLocation.state) ||
+      (req.body.pincode !== undefined && req.body.pincode !== oldLocation.pincode);
+
+    // If address changed, reset coordinates to force fresh geocode
+    if (addressChanged) {
+      req.body.coordinates = { latitude: 0, longitude: 0 };
+    }
+
+    // Update location
+    const updatedLocation = await BrokerLocation.findByIdAndUpdate(id, req.body, {
       new: true,
       runValidators: true,
     });
 
-    if (!location) {
-      return res.status(404).json({ message: "Location not found" });
+    // Fire background geocode if needed
+    if (addressChanged || isZeroCoords(updatedLocation.coordinates)) {
+      startGeocodeJob(updatedLocation._id);
     }
 
     res.json({
-      message: "Location updated successfully",
-      location,
+      message: addressChanged
+        ? "Location updated successfully (address changed → geocoding will update soon)"
+        : "Location updated successfully (geocoding will update soon if needed)",
+      location: updatedLocation,
     });
   } catch (error) {
     res.status(400).json({ message: "Error updating location", error: error.message });
@@ -521,7 +214,7 @@ exports.deleteLocation = async (req, res) => {
   }
 };
 
-// ✅ Bulk import locations (Admin) - auto-correct + auto-geocode
+// ✅ Bulk import locations (Admin) - instant response + background geocode per doc
 exports.bulkImportLocations = async (req, res) => {
   try {
     const { locations } = req.body;
@@ -532,21 +225,20 @@ exports.bulkImportLocations = async (req, res) => {
 
     console.log(`[BrokerLocation] Bulk importing ${locations.length} locations...`);
 
-    // Fix + geocode each record (slow but reliable)
-    const fixedLocations = [];
-    for (const loc of locations) {
-      const fixed = await normalizeAndGeocodePayload(loc);
-      fixedLocations.push(fixed);
-    }
+    const insertedDocs = await BrokerLocation.insertMany(locations, { ordered: false });
 
-    // Insert all locations
-    const result = await BrokerLocation.insertMany(fixedLocations, { ordered: false });
+    console.log(`[BrokerLocation] ✓ Inserted ${insertedDocs.length} locations`);
 
-    console.log(`[BrokerLocation] ✓ Inserted ${result.length} locations`);
+    // ✅ Start background geocoding for all inserted docs that have 0 coords
+    insertedDocs.forEach((doc) => {
+      if (isZeroCoords(doc.coordinates)) {
+        startGeocodeJob(doc._id);
+      }
+    });
 
     res.status(201).json({
-      message: "Bulk import completed successfully",
-      imported: result.length,
+      message: "Bulk import completed successfully (geocoding will update soon)",
+      imported: insertedDocs.length,
       total: locations.length,
       success: true,
     });
@@ -554,8 +246,14 @@ exports.bulkImportLocations = async (req, res) => {
     // Handle duplicate key errors
     if (error.code === 11000) {
       const inserted = error.insertedDocs?.length || 0;
+
+      // ✅ background geocode for inserted docs
+      (error.insertedDocs || []).forEach((doc) => {
+        if (isZeroCoords(doc.coordinates)) startGeocodeJob(doc._id);
+      });
+
       return res.status(201).json({
-        message: `Imported ${inserted} locations, some duplicates skipped`,
+        message: `Imported ${inserted} locations, some duplicates skipped (geocoding will update soon)`,
         imported: inserted,
         total: req.body.locations?.length || 0,
         success: true,
