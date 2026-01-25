@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const blogController = require('../controllers/blogController');
 const { authenticateAdmin } = require('../middlewares/auth');
+const upload = require('../middlewares/upload');
 
 // ===========================
 // PUBLIC ROUTES
@@ -33,10 +34,10 @@ router.get('/admin/all', authenticateAdmin, blogController.adminGetAllBlogs);
 router.get('/admin/blog/:id', authenticateAdmin, blogController.adminGetBlogById);
 
 // Create new blog
-router.post('/admin', authenticateAdmin, blogController.createBlog);
+router.post('/admin', authenticateAdmin, upload.single('featuredImage'), blogController.createBlog);
 
 // Update blog
-router.put('/admin/:id', authenticateAdmin, blogController.updateBlog);
+router.put('/admin/:id', authenticateAdmin, upload.single('featuredImage'), blogController.updateBlog);
 
 // Delete blog
 router.delete('/admin/:id', authenticateAdmin, blogController.deleteBlog);

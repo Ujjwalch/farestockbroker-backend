@@ -343,7 +343,6 @@ const createBlog = async (req, res) => {
             excerpt,
             content,
             author,
-            featuredImage,
             categories,
             tags,
             status,
@@ -353,6 +352,15 @@ const createBlog = async (req, res) => {
             metaDescription,
             metaKeywords
         } = req.body;
+
+        let { featuredImage } = req.body;
+
+        // Handle file upload
+        if (req.file) {
+            const protocol = req.protocol;
+            const host = req.get('host');
+            featuredImage = `${protocol}://${host}/uploads/news/${req.file.filename}`; // Reusing news upload dir as configured in middleware
+        }
 
         // Validate required fields
         if (!title || !excerpt || !content) {
@@ -423,6 +431,13 @@ const updateBlog = async (req, res) => {
     try {
         const { id } = req.params;
         const updateData = req.body;
+
+        // Handle file upload
+        if (req.file) {
+            const protocol = req.protocol;
+            const host = req.get('host');
+            updateData.featuredImage = `${protocol}://${host}/uploads/news/${req.file.filename}`;
+        }
 
         const blog = await Blog.findOne({ _id: id, isDeleted: false });
 
