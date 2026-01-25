@@ -2,15 +2,53 @@ const BrokerLocation = require("../models/BrokerLocation");
 const { geocodeAddress, isZeroCoords } = require("../services/geocodingService");
 
 /**
- * Background geocode runner (fire & forget)
- * This makes sure admin API returns instantly.
+ * ✅ Background Geocode Queue (SAFE MODE)
+ * - no spam
+ * - no parallel burst
+ * - runs forever, one-by-one
+ */
+
+const geocodeQueue = [];
+let isGeocodeWorkerRunning = false;
+
+function enqueueGeocode(locationId) {
+  if (!locationId) return;
+
+  // ✅ prevent duplicates in queue
+  const idStr = String(locationId);
+  if (geocodeQueue.includes(idStr)) return;
+
+  geocodeQueue.push(idStr);
+  startGeocodeWorker();
+}
+
+async function startGeocodeWorker() {
+  if (isGeocodeWorkerRunning) return;
+  isGeocodeWorkerRunning = true;
+
+  while (geocodeQueue.length > 0) {
+    const locationId = geocodeQueue.shift();
+
+    try {
+      await geocodeAndUpdateLocation(locationId);
+    } catch (err) {
+      console.log("[Geocode Worker Error]", err?.message || err);
+    }
+  }
+
+  isGeocodeWorkerRunning = false;
+}
+
+/**
+ * ✅ Background geocode runner (safe)
+ * Only updates if coords are 0
  */
 async function geocodeAndUpdateLocation(locationId) {
   try {
     const loc = await BrokerLocation.findById(locationId);
     if (!loc) return;
 
-    // Only geocode if missing
+    // ✅ Only geocode if missing
     if (!isZeroCoords(loc.coordinates)) return;
 
     const coords = await geocodeAddress({
@@ -32,15 +70,18 @@ async function geocodeAndUpdateLocation(locationId) {
       },
       { new: true }
     );
+
+    // optional debug:
+    // console.log(`[Geocode] ✅ Updated ${loc.city}, ${loc.state} → ${coords.latitude},${coords.longitude}`);
   } catch (err) {
-    // silent fail so API never breaks for admin
     console.log("[Geocode Background Error]", err?.message || err);
   }
 }
 
 function startGeocodeJob(locationId) {
-  // run after response is sent (non-blocking)
-  setImmediate(() => geocodeAndUpdateLocation(locationId));
+  // ✅ do not spawn 75 setImmediate jobs
+  // instead queue it
+  enqueueGeocode(locationId);
 }
 
 // Get all unique cities
@@ -129,13 +170,13 @@ exports.getAllLocations = async (req, res) => {
   }
 };
 
-// ✅ Create new location (Admin) - instant response + background geocode
+// ✅ Create new location (Admin)
 exports.createLocation = async (req, res) => {
   try {
     const location = new BrokerLocation(req.body);
     await location.save();
 
-    // ✅ fire & forget geocoding
+    // ✅ queued geocoding
     startGeocodeJob(location._id);
 
     res.status(201).json({
@@ -148,36 +189,32 @@ exports.createLocation = async (req, res) => {
 };
 
 // ✅ Update location (Admin)
-// ✅ Auto re-geocode when address/city/state/pincode changes
 exports.updateLocation = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Fetch old location first
     const oldLocation = await BrokerLocation.findById(id);
     if (!oldLocation) {
       return res.status(404).json({ message: "Location not found" });
     }
 
-    // Check if address fields changed
     const addressChanged =
       (req.body.address !== undefined && req.body.address !== oldLocation.address) ||
       (req.body.city !== undefined && req.body.city !== oldLocation.city) ||
       (req.body.state !== undefined && req.body.state !== oldLocation.state) ||
       (req.body.pincode !== undefined && req.body.pincode !== oldLocation.pincode);
 
-    // If address changed, reset coordinates to force fresh geocode
+    // If address changed, reset coordinates
     if (addressChanged) {
       req.body.coordinates = { latitude: 0, longitude: 0 };
     }
 
-    // Update location
     const updatedLocation = await BrokerLocation.findByIdAndUpdate(id, req.body, {
       new: true,
       runValidators: true,
     });
 
-    // Fire background geocode if needed
+    // queued geocode if needed
     if (addressChanged || isZeroCoords(updatedLocation.coordinates)) {
       startGeocodeJob(updatedLocation._id);
     }
@@ -214,10 +251,15 @@ exports.deleteLocation = async (req, res) => {
   }
 };
 
-// ✅ Bulk import locations (Admin) - instant response + background geocode per doc
+// ✅ Bulk import locations (Admin)
 exports.bulkImportLocations = async (req, res) => {
   try {
-    const { locations } = req.body;
+    /**
+     * ✅ Frontend may send:
+     * 1) [ ...locationsArray ]
+     * 2) { locations: [ ...locationsArray ] }
+     */
+    const locations = Array.isArray(req.body) ? req.body : req.body?.locations;
 
     if (!Array.isArray(locations) || locations.length === 0) {
       return res.status(400).json({ message: "Invalid locations data" });
@@ -229,7 +271,7 @@ exports.bulkImportLocations = async (req, res) => {
 
     console.log(`[BrokerLocation] ✓ Inserted ${insertedDocs.length} locations`);
 
-    // ✅ Start background geocoding for all inserted docs that have 0 coords
+    // ✅ Queue geocoding (safe, one-by-one)
     insertedDocs.forEach((doc) => {
       if (isZeroCoords(doc.coordinates)) {
         startGeocodeJob(doc._id);
@@ -243,19 +285,20 @@ exports.bulkImportLocations = async (req, res) => {
       success: true,
     });
   } catch (error) {
-    // Handle duplicate key errors
+    // duplicate key handling
     if (error.code === 11000) {
       const inserted = error.insertedDocs?.length || 0;
 
-      // ✅ background geocode for inserted docs
+      console.log(`[BrokerLocation] ⚠ duplicates skipped, inserted=${inserted}`);
+
       (error.insertedDocs || []).forEach((doc) => {
         if (isZeroCoords(doc.coordinates)) startGeocodeJob(doc._id);
       });
 
       return res.status(201).json({
-        message: `Imported ${inserted} locations, some duplicates skipped (geocoding will update soon)`,
+        message: `Imported ${inserted} locations, duplicates skipped (geocoding will update soon)`,
         imported: inserted,
-        total: req.body.locations?.length || 0,
+        total: Array.isArray(req.body) ? req.body.length : req.body?.locations?.length || 0,
         success: true,
       });
     }

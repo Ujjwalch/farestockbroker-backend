@@ -1,9 +1,28 @@
 /**
  * Free Geocoding using OpenStreetMap Nominatim
  * - No paid API
- * - Rate limited
- * - Caching so same city/state doesn't spam Nominatim
+ * - Rate limited (1 req/sec)
+ * - Caching so same query doesn't spam Nominatim
+ * - Retry + timeout protection
  */
+
+let fetchFn = global.fetch;
+
+// ✅ fallback if node doesn't support fetch
+if (!fetchFn) {
+  try {
+    // node-fetch v3 is ESM, so require() won't work
+    // but many projects still have node-fetch v2
+    // we'll attempt require and fallback safely
+    // eslint-disable-next-line global-require
+    fetchFn = require("node-fetch");
+  } catch (e) {
+    // if you are here, install one of:
+    // npm i node-fetch@2
+    // OR upgrade node to 18+
+    fetchFn = null;
+  }
+}
 
 const NOMINATIM_BASE = "https://nominatim.openstreetmap.org/search";
 
@@ -40,19 +59,59 @@ function normalizeKey(str) {
     .trim();
 }
 
+// ✅ fetch with timeout (prevents hanging)
+async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+  if (!fetchFn) throw new Error("Fetch not available. Use Node 18+ or install node-fetch@2");
+
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetchFn(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return res;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+// ✅ retry wrapper (Nominatim can fail randomly)
+async function fetchWithRetry(url, options = {}, retries = 2) {
+  let lastErr;
+
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fetchWithTimeout(url, options, 8000);
+    } catch (err) {
+      lastErr = err;
+      await sleep(500 + i * 700);
+    }
+  }
+
+  throw lastErr;
+}
+
 async function geocodeNominatim(query) {
   await rateLimit();
 
   const url = `${NOMINATIM_BASE}?format=json&q=${encodeURIComponent(query)}&limit=1`;
 
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": "FareStockBroker/1.0 (Backend Geocoding)",
-      Accept: "application/json",
+  // ✅ Nominatim needs proper headers (sometimes blocks)
+  const res = await fetchWithRetry(
+    url,
+    {
+      headers: {
+        "User-Agent": "FareStockBroker/1.0 (Backend Geocoding)",
+        "Accept": "application/json",
+        "Accept-Language": "en",
+      },
     },
-  });
+    2
+  ).catch(() => null);
 
-  if (!res.ok) return null;
+  if (!res || !res.ok) return null;
 
   const data = await res.json().catch(() => null);
   if (!Array.isArray(data) || data.length === 0) return null;
@@ -90,7 +149,10 @@ async function geocodeAddress({ address, city, state, pincode }) {
 
   for (const query of attempts) {
     const cacheKey = normalizeKey(query);
-    if (geoCache.has(cacheKey)) return geoCache.get(cacheKey);
+
+    if (geoCache.has(cacheKey)) {
+      return geoCache.get(cacheKey);
+    }
 
     const coords = await geocodeNominatim(query);
     if (coords) {
