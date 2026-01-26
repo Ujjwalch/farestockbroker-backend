@@ -134,13 +134,20 @@ exports.createNews = async (req, res) => {
             return res.status(400).json({ message: 'News with this slug already exists' });
         }
 
+        // Handle image upload
+        let finalImageUrl = imageUrl;
+        if (req.file) {
+            // If image file was uploaded, use its path
+            finalImageUrl = `/uploads/news/${req.file.filename}`;
+        }
+
         const news = new News({
             title,
             slug,
             content,
             summary,
             category,
-            imageUrl,
+            imageUrl: finalImageUrl,
             date: date || Date.now(),
             isActive: isActive !== undefined ? isActive : true
         });
@@ -184,7 +191,16 @@ exports.updateNews = async (req, res) => {
         if (content) news.content = content;
         if (summary) news.summary = summary;
         if (category) news.category = category;
-        if (imageUrl) news.imageUrl = imageUrl;
+
+        // Handle image upload
+        if (req.file) {
+            // If new image file was uploaded, use its path
+            news.imageUrl = `/uploads/news/${req.file.filename}`;
+        } else if (imageUrl) {
+            // If imageUrl provided (and no file), update it
+            news.imageUrl = imageUrl;
+        }
+
         if (date) news.date = date;
         if (isActive !== undefined) news.isActive = isActive;
 

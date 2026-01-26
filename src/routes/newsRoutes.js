@@ -3,6 +3,7 @@ const router = express.Router();
 const { check } = require('express-validator');
 const newsController = require('../controllers/newsController');
 const { authenticateAdmin } = require('../middlewares/auth');
+const upload = require('../middlewares/upload');
 
 // Public routes
 router.get('/', newsController.getAllNews);
@@ -16,6 +17,7 @@ router.post(
     '/',
     [
         authenticateAdmin,
+        upload.single('image'),
         [
             check('title', 'Title is required').not().isEmpty(),
             check('slug', 'Slug is required').not().isEmpty(),
@@ -31,6 +33,7 @@ router.put(
     '/:id',
     [
         authenticateAdmin,
+        upload.single('image'),
         [
             check('title', 'Title is required').optional().not().isEmpty(),
             check('slug', 'Slug is required').optional().not().isEmpty()
