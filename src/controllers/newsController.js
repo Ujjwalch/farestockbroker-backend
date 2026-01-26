@@ -134,11 +134,12 @@ exports.createNews = async (req, res) => {
             return res.status(400).json({ message: 'News with this slug already exists' });
         }
 
-        // Handle image upload
+        // Handle image upload - construct full URL like blog does
         let finalImageUrl = imageUrl;
         if (req.file) {
-            // If image file was uploaded, use its path
-            finalImageUrl = `/uploads/news/${req.file.filename}`;
+            const protocol = req.protocol;
+            const host = req.get('host');
+            finalImageUrl = `${protocol}://${host}/uploads/news/${req.file.filename}`;
         }
 
         const news = new News({
@@ -192,12 +193,12 @@ exports.updateNews = async (req, res) => {
         if (summary) news.summary = summary;
         if (category) news.category = category;
 
-        // Handle image upload
+        // Handle image upload - construct full URL like blog does
         if (req.file) {
-            // If new image file was uploaded, use its path
-            news.imageUrl = `/uploads/news/${req.file.filename}`;
+            const protocol = req.protocol;
+            const host = req.get('host');
+            news.imageUrl = `${protocol}://${host}/uploads/news/${req.file.filename}`;
         } else if (imageUrl) {
-            // If imageUrl provided (and no file), update it
             news.imageUrl = imageUrl;
         }
 
