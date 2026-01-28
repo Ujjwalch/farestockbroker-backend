@@ -45,6 +45,7 @@ app.use('/api/blogs', blogRoutes);
 app.use('/api/news', newsRoutes);
 app.use('/api/investments', require('./routes/investmentRoutes'));
 app.use('/api/market', require('./routes/marketRoutes'));
+app.use('/api/contact', require('./routes/contactRoutes'));
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'FarestockBroker API is running' });

@@ -14,13 +14,13 @@ const createTransporter = () => {
         console.log('To:', mailOptions.to);
         console.log('Subject:', mailOptions.subject);
         console.log('Content:', mailOptions.text || 'HTML content');
-        
+
         // Extract OTP from HTML content for development
         const otpMatch = mailOptions.html?.match(/class="otp-code">(\d{6})</);
         if (otpMatch) {
           console.log('🔑 OTP CODE:', otpMatch[1]);
         }
-        
+
         return { messageId: 'dev-' + Date.now() };
       }
     };
@@ -186,7 +186,78 @@ const sendWelcomeEmail = async (email, adminName, username) => {
   }
 };
 
+// Send inquiry email to admin
+const sendInquiryEmail = async (data) => {
+  try {
+    const transporter = createTransporter();
+    const adminEmail = process.env.VITE_EMAILJS_SERVICE_ID === 'service_f9cyjom' ? 'ujjwal99355@gmail.com' : (process.env.EMAIL_USER || 'admin@farestock.com');
+    // Fallback logic: if they haven't set a specific admin recipient env var, we send to the email user or the hardcoded one.
+    // The user specifically asked for ujjwal99355@gmail.com.
+
+    const mailOptions = {
+      from: process.env.EMAIL_FROM || 'FarestockBroker <noreply@farestockbroker.com>',
+      to: adminEmail,
+      subject: `New Broker Inquiry: ${data.brokerName}`,
+      text: `Name: ${data.name}\nEmail: ${data.email}\nPhone: ${data.phone}\nMessage: ${data.message}\nBroker: ${data.brokerName} (${data.branchName})`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: #0f172a; color: white; padding: 20px; border-radius: 8px 8px 0 0; }
+            .content { border: 1px solid #e2e8f0; border-top: none; padding: 20px; border-radius: 0 0 8px 8px; }
+            .field { margin-bottom: 10px; }
+            .label { font-weight: bold; color: #64748b; }
+            .value { color: #0f172a; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h2>New Broker Inquiry</h2>
+              <p>${data.brokerName}</p>
+            </div>
+            <div class="content">
+              <div class="field">
+                <div class="label">Name</div>
+                <div class="value">${data.name}</div>
+              </div>
+              <div class="field">
+                <div class="label">Email</div>
+                <div class="value">${data.email}</div>
+              </div>
+              <div class="field">
+                <div class="label">Phone</div>
+                <div class="value">${data.phone}</div>
+              </div>
+              <div class="field">
+                <div class="label">Branch</div>
+                <div class="value">${data.branchName}</div>
+              </div>
+              <div class="field">
+                <div class="label">Message</div>
+                <div class="value">${data.message}</div>
+              </div>
+            </div>
+          </div>
+        </body>
+        </html>
+      `
+    };
+
+    const result = await transporter.sendMail(mailOptions);
+    console.log('Inquiry email sent successfully:', result.messageId);
+    return { success: true, messageId: result.messageId };
+  } catch (error) {
+    console.error('Error sending inquiry email:', error);
+    return { success: false, error: error.message };
+  }
+};
+
 module.exports = {
   sendOTPEmail,
   sendWelcomeEmail,
+  sendInquiryEmail
 };
