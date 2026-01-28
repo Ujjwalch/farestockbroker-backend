@@ -190,9 +190,7 @@ const sendWelcomeEmail = async (email, adminName, username) => {
 const sendInquiryEmail = async (data) => {
   try {
     const transporter = createTransporter();
-    const adminEmail = process.env.VITE_EMAILJS_SERVICE_ID === 'service_f9cyjom' ? 'ujjwal99355@gmail.com' : (process.env.EMAIL_USER || 'admin@farestock.com');
-    // Fallback logic: if they haven't set a specific admin recipient env var, we send to the email user or the hardcoded one.
-    // The user specifically asked for ujjwal99355@gmail.com.
+    const adminEmail = process.env.ADMIN_EMAIL || process.env.EMAIL_USER || 'ujjwal99355@gmail.com';
 
     const mailOptions = {
       from: process.env.EMAIL_FROM || 'FarestockBroker <noreply@farestockbroker.com>',
