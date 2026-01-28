@@ -26,15 +26,30 @@ exports.getAllNews = async (req, res) => {
             const endDate = new Date(parseInt(req.query.year), parseInt(req.query.month), 0, 23, 59, 59);
             filter.date = { $gte: startDate, $lte: endDate };
         } else if (req.query.date) {
-            console.log('--- DATE FILTER DEBUG ---');
+            console.log('--- DATE FILTER DEBUG (UTC FIX) ---');
             console.log('Query Date:', req.query.date);
-            // Filter by specific date
-            const queryDate = new Date(req.query.date);
-            const startDate = new Date(queryDate.setHours(0, 0, 0, 0));
-            const endDate = new Date(queryDate.setHours(23, 59, 59, 999));
-            console.log('Start Date:', startDate);
-            console.log('End Date:', endDate);
-            filter.date = { $gte: startDate, $lte: endDate };
+
+            // Parse YYYY-MM-DD manually to avoid timezone issues
+            const parts = req.query.date.split('-');
+            if (parts.length === 3) {
+                const year = parseInt(parts[0]);
+                const month = parseInt(parts[1]) - 1; // 0-indexed
+                const day = parseInt(parts[2]);
+
+                // Create range for this day in UTC
+                // We search from start of this day to end of this day
+                // But since DB dates might be anything, we basically want to match:
+                // START: YYYY-MM-DDT00:00:00.000 (Local/Server consideration?)
+                // Actually, best is to cover the whole 24h regardless.
+
+                const startDate = new Date(year, month, day, 0, 0, 0, 0);
+                const endDate = new Date(year, month, day, 23, 59, 59, 999);
+
+                console.log('Start Date (Local Constructed):', startDate);
+                console.log('End Date (Local Constructed):', endDate);
+
+                filter.date = { $gte: startDate, $lte: endDate };
+            }
             console.log('Constructed Filter:', JSON.stringify(filter));
         }
 
