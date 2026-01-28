@@ -25,6 +25,12 @@ exports.getAllNews = async (req, res) => {
             const startDate = new Date(parseInt(req.query.year), parseInt(req.query.month) - 1, 1);
             const endDate = new Date(parseInt(req.query.year), parseInt(req.query.month), 0, 23, 59, 59);
             filter.date = { $gte: startDate, $lte: endDate };
+        } else if (req.query.date) {
+            // Filter by specific date
+            const queryDate = new Date(req.query.date);
+            const startDate = new Date(queryDate.setHours(0, 0, 0, 0));
+            const endDate = new Date(queryDate.setHours(23, 59, 59, 999));
+            filter.date = { $gte: startDate, $lte: endDate };
         }
 
         const news = await News.find(filter)
