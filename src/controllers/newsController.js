@@ -21,36 +21,30 @@ exports.getAllNews = async (req, res) => {
         }
 
         // Date filtering (Month/Year)
-        if (req.query.month && req.query.year) {
-            const startDate = new Date(parseInt(req.query.year), parseInt(req.query.month) - 1, 1);
-            const endDate = new Date(parseInt(req.query.year), parseInt(req.query.month), 0, 23, 59, 59);
-            filter.date = { $gte: startDate, $lte: endDate };
-        } else if (req.query.date) {
-            console.log('--- DATE FILTER DEBUG (UTC FIX) ---');
+        // Date filtering
+        // Priority: Specific Date has higher precedence
+        if (req.query.date) {
+            console.log('--- DATE FILTER (PRIORITY) ---');
             console.log('Query Date:', req.query.date);
 
-            // Parse YYYY-MM-DD manually to avoid timezone issues
             const parts = req.query.date.split('-');
             if (parts.length === 3) {
                 const year = parseInt(parts[0]);
-                const month = parseInt(parts[1]) - 1; // 0-indexed
+                const month = parseInt(parts[1]) - 1;
                 const day = parseInt(parts[2]);
 
-                // Create range for this day in UTC
-                // We search from start of this day to end of this day
-                // But since DB dates might be anything, we basically want to match:
-                // START: YYYY-MM-DDT00:00:00.000 (Local/Server consideration?)
-                // Actually, best is to cover the whole 24h regardless.
-
+                // Construct simple local date range
                 const startDate = new Date(year, month, day, 0, 0, 0, 0);
                 const endDate = new Date(year, month, day, 23, 59, 59, 999);
 
-                console.log('Start Date (Local Constructed):', startDate);
-                console.log('End Date (Local Constructed):', endDate);
-
+                console.log('Filter Range:', startDate, 'to', endDate);
                 filter.date = { $gte: startDate, $lte: endDate };
             }
-            console.log('Constructed Filter:', JSON.stringify(filter));
+        } else if (req.query.month && req.query.year) {
+            // Month/Year archive filter
+            const startDate = new Date(parseInt(req.query.year), parseInt(req.query.month) - 1, 1);
+            const endDate = new Date(parseInt(req.query.year), parseInt(req.query.month), 0, 23, 59, 59);
+            filter.date = { $gte: startDate, $lte: endDate };
         }
 
         const news = await News.find(filter)
