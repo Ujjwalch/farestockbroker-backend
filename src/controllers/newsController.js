@@ -26,11 +26,16 @@ exports.getAllNews = async (req, res) => {
             const endDate = new Date(parseInt(req.query.year), parseInt(req.query.month), 0, 23, 59, 59);
             filter.date = { $gte: startDate, $lte: endDate };
         } else if (req.query.date) {
+            console.log('--- DATE FILTER DEBUG ---');
+            console.log('Query Date:', req.query.date);
             // Filter by specific date
             const queryDate = new Date(req.query.date);
             const startDate = new Date(queryDate.setHours(0, 0, 0, 0));
             const endDate = new Date(queryDate.setHours(23, 59, 59, 999));
+            console.log('Start Date:', startDate);
+            console.log('End Date:', endDate);
             filter.date = { $gte: startDate, $lte: endDate };
+            console.log('Constructed Filter:', JSON.stringify(filter));
         }
 
         const news = await News.find(filter)
