@@ -23,28 +23,23 @@ exports.getAllNews = async (req, res) => {
             filter.$text = { $search: req.query.search };
         }
 
-        // DATE FILTER LOGIC - FIXED VERSION
+        // DATE FILTER LOGIC
         // Priority: Specific Date > Month/Year
         if (req.query.date) {
             console.log('--- APPLYING DATE FILTER ---');
             console.log('Raw Date:', req.query.date);
 
             try {
-                // Parse the date string - handle both YYYY-MM-DD and other formats
+                // Parse YYYY-MM-DD format
                 const dateStr = req.query.date.trim();
-                const parsedDate = new Date(dateStr);
+                const [year, month, day] = dateStr.split('-').map(Number);
 
-                if (!isNaN(parsedDate.getTime())) {
-                    // Extract year, month, day from the parsed date
-                    const year = parsedDate.getUTCFullYear();
-                    const month = parsedDate.getUTCMonth();
-                    const day = parsedDate.getUTCDate();
-
+                if (year && month && day) {
                     // Create UTC date range for the entire day
-                    const startDate = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
-                    const endDate = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+                    const startDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+                    const endDate = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
 
-                    console.log('Parsed Date:', parsedDate);
+                    console.log('Parsed Date:', { year, month, day });
                     console.log('Range Start (UTC):', startDate.toISOString());
                     console.log('Range End (UTC):', endDate.toISOString());
 
