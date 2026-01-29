@@ -23,45 +23,54 @@ exports.getAllNews = async (req, res) => {
             filter.$text = { $search: req.query.search };
         }
 
-        // DATE FILTER LOGIC
+        // DATE FILTER LOGIC - FIXED VERSION
         // Priority: Specific Date > Month/Year
         if (req.query.date) {
-            console.log('--- APPLYING DATE FILTER (UTC) ---');
+            console.log('--- APPLYING DATE FILTER ---');
             console.log('Raw Date:', req.query.date);
 
-            // Expected format: YYYY-MM-DD
-            const parts = req.query.date.trim().split('-');
-            if (parts.length === 3) {
-                const year = parseInt(parts[0]);
-                const month = parseInt(parts[1]) - 1; // JS Month is 0-indexed
-                const day = parseInt(parts[2]);
+            try {
+                // Parse the date string - handle both YYYY-MM-DD and other formats
+                const dateStr = req.query.date.trim();
+                const parsedDate = new Date(dateStr);
 
-                // Create UTC dates to avoid timezone issues
-                const startDate = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
-                const endDate = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
+                if (!isNaN(parsedDate.getTime())) {
+                    // Extract year, month, day from the parsed date
+                    const year = parsedDate.getUTCFullYear();
+                    const month = parsedDate.getUTCMonth();
+                    const day = parsedDate.getUTCDate();
 
-                console.log('Range Start (UTC):', startDate);
-                console.log('Range End (UTC):', endDate);
+                    // Create UTC date range for the entire day
+                    const startDate = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+                    const endDate = new Date(Date.UTC(year, month, day, 23, 59, 59, 999));
 
-                filter.date = { $gte: startDate, $lte: endDate };
+                    console.log('Parsed Date:', parsedDate);
+                    console.log('Range Start (UTC):', startDate.toISOString());
+                    console.log('Range End (UTC):', endDate.toISOString());
+
+                    filter.date = { $gte: startDate, $lte: endDate };
+                } else {
+                    console.log('Invalid date format:', dateStr);
+                }
+            } catch (error) {
+                console.error('Error parsing date:', error);
             }
         }
         else if (req.query.month && req.query.year) {
-            console.log('--- APPLYING ARCHIVE FILTER (UTC) ---');
+            console.log('--- APPLYING ARCHIVE FILTER ---');
             const year = parseInt(req.query.year);
-            const month = parseInt(req.query.month) - 1;
+            const month = parseInt(req.query.month) - 1; // 0-indexed
 
-            // Use UTC to avoid timezone shifts
             const startDate = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
             const endDate = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
 
-            console.log('Archive Range Start (UTC):', startDate);
-            console.log('Archive Range End (UTC):', endDate);
+            console.log('Archive Range Start (UTC):', startDate.toISOString());
+            console.log('Archive Range End (UTC):', endDate.toISOString());
 
             filter.date = { $gte: startDate, $lte: endDate };
         }
 
-        console.log('FINAL FILTER:', JSON.stringify(filter));
+        console.log('FINAL FILTER:', JSON.stringify(filter, null, 2));
 
         const news = await News.find(filter)
             .sort({ date: -1 })
@@ -69,6 +78,9 @@ exports.getAllNews = async (req, res) => {
             .limit(limit);
 
         const total = await News.countDocuments(filter);
+
+        console.log('Found news count:', news.length);
+        console.log('Total matching:', total);
 
         res.json({
             news,
