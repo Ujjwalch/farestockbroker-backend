@@ -219,12 +219,34 @@ exports.getBasisOfAllotment = async (req, res) => {
     const queryYear = year || currentYear;
     const queryType = type || 'all';
     
-    const endpoint = `/basis-of-allotment/${queryYear}/${queryType}`;
-    const data = await makeIPORequest(endpoint);
+    // Fetch all pages of data
+    let allData = [];
+    let pageNumber = 1;
+    let hasMoreData = true;
+    
+    while (hasMoreData && pageNumber <= 10) { // Safety limit of 10 pages
+      const endpoint = `/basis-of-allotment/${queryYear}/${queryType}?pageNumber=${pageNumber}&perPageRow=100`;
+      const data = await makeIPORequest(endpoint);
+      
+      if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+        allData = allData.concat(data.data);
+        
+        // Check if there are more pages
+        const totalRows = data.totalRowCount || 0;
+        const fetchedRows = allData.length;
+        hasMoreData = fetchedRows < totalRows;
+        pageNumber++;
+      } else {
+        hasMoreData = false;
+      }
+    }
     
     res.json({
       success: true,
-      ...data
+      isSuccess: true,
+      message: 'Successfully.',
+      totalRowCount: allData.length,
+      data: allData
     });
   } catch (error) {
     res.status(500).json({

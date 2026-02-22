@@ -20,6 +20,7 @@ const newsRoutes = require('./routes/newsRoutes');
 const connetDB = require('./config/database');
 const { startWorldIpoCron } = require('./jobs/worldIpoCron');
 const { startIPOSyncCron } = require('./jobs/ipoSyncCron');
+const { startInvestmentScraperCron } = require('./jobs/investmentScraperCron');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -71,5 +72,6 @@ app.listen(PORT, () => {
   connetDB();
   startWorldIpoCron();
   startIPOSyncCron(); // Start IPO data sync cron
+  startInvestmentScraperCron(); // Start NCD/Investment data scraper cron
   console.log(`Server is running on port ${PORT}`);
 });

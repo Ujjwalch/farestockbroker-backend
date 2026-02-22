@@ -33,8 +33,8 @@ const investmentOptionSchema = new mongoose.Schema({
     status: {
         type: String,
         required: true,
-        enum: ['Open', 'Upcoming', 'Closed'],
-        default: 'Open'
+        enum: ['Pending Review', 'Approved'],
+        default: 'Pending Review'
     },
     minInvestment: {
         type: Number,
