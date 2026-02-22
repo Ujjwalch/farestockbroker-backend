@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const IPOCacheSchema = new mongoose.Schema(
   {
     ipoId: { 
-      type: Number, 
+      type: String, 
       required: true, 
       unique: true,
       index: true 
@@ -12,10 +12,12 @@ const IPOCacheSchema = new mongoose.Schema(
     // Basic IPO Info
     companyName: { type: String, required: true },
     companyLogo: { type: String },
+    companyShortName: { type: String },
     type: { type: String, enum: ['Mainboard', 'SME'], required: true },
     exchanged: { type: String },
     issueType: { type: String },
     symbol: { type: String },
+    sector: { type: String },
     
     // Dates
     startDate: { type: String },
@@ -27,7 +29,34 @@ const IPOCacheSchema = new mongoose.Schema(
     lotSize: { type: Number },
     minimumPrice: { type: Number },
     maximumPrice: { type: Number },
+    issuePrice: { type: Number },
     totalIssuePrice: { type: String },
+    faceValue: { type: Number },
+    minBidQuantity: { type: Number },
+    cutOffPrice: { type: Number },
+    
+    // Company Details
+    aboutCompany: { type: mongoose.Schema.Types.Mixed },
+    pros: [{ type: String }],
+    cons: [{ type: String }],
+    
+    // Links and Documents
+    documentUrl: { type: String },
+    rtaLink: { type: String },
+    
+    // Timing
+    dailyStartTime: { type: String },
+    dailyEndTime: { type: String },
+    lastBidPlaceTime: { type: String },
+    
+    // Status Flags
+    isAllotmentAnnounced: { type: Boolean },
+    preApplyOpen: { type: Boolean },
+    
+    // Additional Data
+    subscriptionRates: { type: mongoose.Schema.Types.Mixed },
+    listing: { type: mongoose.Schema.Types.Mixed },
+    registrar: { type: String },
     
     // GMP Data
     gmpPrice: { type: Number },

@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const ListingPriceSchema = new mongoose.Schema(
   {
     ipoId: { 
-      type: Number, 
+      type: String, 
       required: true, 
       unique: true,
       index: true 
