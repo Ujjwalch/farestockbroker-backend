@@ -14,9 +14,9 @@ async function syncAllIPOData() {
     console.log('\n🔄 Starting IPO data sync...');
     
     // Check if API credentials are configured
-    if (!IPO_API_KEY_BASE || !IPO_API_KEY_ENTERPRISE) {
+    if (!IPO_API_KEY_BASE) {
       console.error('❌ IPO API credentials not configured');
-      console.error('   Please set IPO_API_KEY_BASE and IPO_API_KEY_ENTERPRISE environment variables');
+      console.error('   Please set IPO_API_KEY_BASE environment variable');
       return { success: false, error: 'API credentials not configured' };
     }
     
@@ -26,27 +26,36 @@ async function syncAllIPOData() {
     const allIPOs = await fetchAllIPOs();
     const mainboardData = allIPOs.filter(ipo => ipo.type === 'Mainboard');
     const smeData = allIPOs.filter(ipo => ipo.type === 'SME');
-    const gmpData = await fetchGMPList();
     
-    console.log(`📊 Fetched: ${mainboardData.length} Mainboard, ${smeData.length} SME, ${gmpData.length} GMP entries`);
+    console.log(`📊 Fetched: ${mainboardData.length} Mainboard, ${smeData.length} SME`);
     
     // Combine all IPOs (they're already converted)
     const allIPOsForSync = [...mainboardData, ...smeData];
     
-    // Create GMP map
-    const gmpMap = new Map();
-    gmpData.forEach(item => {
-      gmpMap.set(item.ipoId, item);
-    });
-    
     // Sync each IPO
     let updated = 0;
     let created = 0;
+    let gmpFetched = 0;
+    let gmpAttempted = 0;
     
     for (const ipo of allIPOsForSync) {
       try {
-        const gmpInfo = gmpMap.get(ipo.ipoId);
         const status = getIPOStatus(ipo.startDate, ipo.endDate, ipo.listingDate);
+        
+        // Fetch GMP data from Enterprise API if available
+        let gmpData = null;
+        if (IPO_API_KEY_ENTERPRISE && (status === 'open' || status === 'upcoming' || status === 'closed')) {
+          gmpAttempted++;
+          gmpData = await fetchIPOGMPData(ipo.ipoId);
+          if (gmpData && gmpData.gmpPrice) {
+            gmpFetched++;
+            if (gmpFetched % 10 === 0) {
+              console.log(`   💰 GMP Progress: ${gmpFetched}/${gmpAttempted} fetched`);
+            }
+          }
+          // Small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
         
         // Get listing price if listed
         let listingPriceData = null;
@@ -94,11 +103,11 @@ async function syncAllIPOData() {
           subscriptionRates: ipo.subscriptionRates,
           listing: ipo.listing,
           
-          // GMP data
-          gmpPrice: gmpInfo?.gmpPrice || null,
-          estimatedListingPrice: gmpInfo?.estimatedListingPrice || null,
-          estimatedListingPercentage: gmpInfo?.estimatedListingPercentage || null,
-          gmpLastUpdate: gmpInfo?.lastUpdate || null,
+          // GMP data - use from Enterprise API if available, otherwise from IPO object
+          gmpPrice: gmpData?.gmpPrice || ipo.gmpPrice || null,
+          estimatedListingPrice: gmpData?.estimatedListingPrice || ipo.estimatedListingPrice || null,
+          estimatedListingPercentage: gmpData?.estimatedListingPercentage || ipo.estimatedListingPercentage || null,
+          gmpLastUpdate: gmpData?.gmpLastUpdate || ipo.gmpLastUpdate || null,
           
           // Listing price data
           listingPrice: listingPriceData?.listingPrice || null,
@@ -121,9 +130,9 @@ async function syncAllIPOData() {
     }
     
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`✅ Sync complete: ${created} created, ${updated} updated in ${duration}s\n`);
+    console.log(`✅ Sync complete: ${created} created, ${updated} updated, ${gmpFetched} with GMP in ${duration}s\n`);
     
-    return { success: true, created, updated, total: allIPOsForSync.length };
+    return { success: true, created, updated, gmpFetched, total: allIPOsForSync.length };
     
   } catch (error) {
     console.error('❌ IPO sync failed:', error.message);
@@ -132,7 +141,7 @@ async function syncAllIPOData() {
 }
 
 /**
- * Helper function to make API requests with fallback
+ * Helper function to make API requests (uses Base API by default)
  */
 async function makeAPIRequest(endpoint, useEnterprise = false) {
   const apiKey = useEnterprise ? IPO_API_KEY_ENTERPRISE : IPO_API_KEY_BASE;
@@ -148,7 +157,7 @@ async function makeAPIRequest(endpoint, useEnterprise = false) {
   } catch (error) {
     console.error(`   ❌ API request failed (${useEnterprise ? 'Enterprise' : 'Base'} key):`, error.message);
     
-    // If base key fails, try enterprise key
+    // If base key fails, try enterprise key as fallback
     if (!useEnterprise && IPO_API_KEY_ENTERPRISE) {
       console.log('   🔄 Retrying with Enterprise API key...');
       return makeAPIRequest(endpoint, true);
@@ -199,37 +208,69 @@ function convertIPOData(ipoData) {
     isAllotmentAnnounced: ipoData.isAllotmentAnnounced,
     preApplyOpen: ipoData.preApplyOpen,
     subscriptionRates: ipoData.subscriptionRates,
-    listing: ipoData.listing
+    listing: ipoData.listing,
+    
+    // GMP data from API (if available)
+    gmpPrice: ipoData.gmp || ipoData.gmpPrice || null,
+    estimatedListingPrice: ipoData.estimatedListingPrice || null,
+    estimatedListingPercentage: ipoData.estimatedListingPercentage || ipoData.gmpPercentage || null,
+    gmpLastUpdate: ipoData.gmpLastUpdate || ipoData.gmpUpdatedAt || null,
   };
 }
 
 /**
- * Fetch all IPOs from external API
+ * Fetch all IPOs from external API (up to 1000 total)
  */
 async function fetchAllIPOs() {
   try {
     console.log('   Fetching IPOs from all statuses...');
     
+    // API supports: open, upcoming, closed
     const statuses = ['open', 'upcoming', 'closed'];
     const allIPOs = [];
+    const maxPerStatus = 350; // ~1000 total across 3 statuses
     
     for (const status of statuses) {
       try {
         console.log(`   Fetching ${status} IPOs...`);
-        const endpoint = `/api/ipo/${status}?limit=100`;
-        const data = await makeAPIRequest(endpoint);
         
-        if (data.ipos && Array.isArray(data.ipos)) {
-          const convertedIPOs = data.ipos.map(convertIPOData);
-          allIPOs.push(...convertedIPOs);
-          console.log(`   ✅ ${status}: ${convertedIPOs.length} IPOs`);
+        // Fetch multiple pages to get up to maxPerStatus IPOs
+        let page = 1;
+        let hasMore = true;
+        let statusIPOs = [];
+        
+        while (hasMore && statusIPOs.length < maxPerStatus) {
+          const endpoint = `/api/ipo/${status}?page=${page}&limit=100`;
+          const data = await makeAPIRequest(endpoint);
+          
+          if (data.ipos && Array.isArray(data.ipos) && data.ipos.length > 0) {
+            const convertedIPOs = data.ipos.map(convertIPOData);
+            statusIPOs.push(...convertedIPOs);
+            console.log(`   📄 ${status} page ${page}: ${convertedIPOs.length} IPOs (total: ${statusIPOs.length})`);
+            
+            // Check if there are more pages
+            if (data.ipos.length < 100 || statusIPOs.length >= maxPerStatus) {
+              hasMore = false;
+            } else {
+              page++;
+            }
+          } else {
+            hasMore = false;
+          }
         }
+        
+        allIPOs.push(...statusIPOs.slice(0, maxPerStatus));
+        console.log(`   ✅ ${status}: ${statusIPOs.length} IPOs fetched`);
       } catch (error) {
         console.error(`   ❌ Failed to fetch ${status} IPOs:`, error.message);
       }
     }
     
-    return allIPOs;
+    // Limit to 1000 total IPOs
+    const limitedIPOs = allIPOs.slice(0, 1000);
+    console.log(`   📊 Total IPOs fetched: ${limitedIPOs.length} (limit: 1000)`);
+    
+    return limitedIPOs;
   } catch (error) {
     console.error('   ❌ Failed to fetch IPOs:', error.message);
     throw error;
@@ -253,18 +294,37 @@ async function fetchSMEIPOs() {
 }
 
 /**
- * Fetch GMP list from external API
+ * Fetch GMP data for a specific IPO using Enterprise API
  */
-async function fetchGMPList() {
+async function fetchIPOGMPData(searchId) {
   try {
-    console.log('   Fetching GMP List...');
-    // Note: iponotify.me API might not have GMP data
-    // This is a placeholder that returns empty array
-    console.log('   ⚠️  GMP data not available in new API');
-    return [];
+    if (!IPO_API_KEY_ENTERPRISE) {
+      return null;
+    }
+    
+    // Correct endpoint according to API docs
+    const endpoint = `/api/ipo/id/${searchId}`;
+    const response = await axios.get(`${IPO_API_BASE_URL}${endpoint}`, {
+      headers: {
+        'X-API-KEY': IPO_API_KEY_ENTERPRISE
+      },
+      timeout: 10000
+    });
+    
+    if (response.data) {
+      const ipoDetails = response.data;
+      return {
+        gmpPrice: ipoDetails.gmp || ipoDetails.gmpPrice || null,
+        estimatedListingPrice: ipoDetails.estimatedListingPrice || null,
+        estimatedListingPercentage: ipoDetails.estimatedListingPercentage || ipoDetails.gmpPercentage || null,
+        gmpLastUpdate: ipoDetails.gmpLastUpdate || ipoDetails.gmpUpdatedAt || null,
+      };
+    }
+    
+    return null;
   } catch (error) {
-    console.error('   ❌ GMP fetch failed:', error.message);
-    return [];
+    // Silently fail for GMP data - it's optional
+    return null;
   }
 }
 
